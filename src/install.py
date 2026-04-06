@@ -6,15 +6,16 @@ import winreg
 
 
 def _make_command(subcommand: str) -> str:
-    """탐색기에서 실행할 명령 문자열을 반환.
-    frozen exe: '"exe" subcommand "%1"'
-    개발 모드:  '"python.exe" "script.py" subcommand "%1"'
-    """
+    """탐색기에서 실행할 명령 문자열 반환."""
     from pathlib import Path
     if getattr(sys, "frozen", False):
         return f'"{sys.executable}" {subcommand} "%1"'
+    # 개발 모드: pythonw.exe 우선 사용 (콘솔 창 없음)
+    python = Path(sys.executable)
+    pythonw = python.parent / "pythonw.exe"
+    interp = str(pythonw) if pythonw.exists() else str(python)
     script = str(Path(sys.argv[0]).resolve())
-    return f'"{sys.executable}" "{script}" {subcommand} "%1"'
+    return f'"{interp}" "{script}" {subcommand} "%1"'
 
 
 def _set_key(base: int, key_path: str, values: dict[str, str]) -> None:

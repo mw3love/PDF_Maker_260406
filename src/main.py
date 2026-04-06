@@ -2,66 +2,73 @@ import argparse
 import shutil
 import sys
 import tempfile
+import threading
 import time
-import tkinter as tk
 from pathlib import Path
-from tkinter import messagebox
 from typing import List, Optional
 
 SUPPORTED_IMG = {".jpg", ".jpeg", ".png", ".bmp"}
 
 
 # ---------------------------------------------------------------------------
-# 세션 수집기
+# 세션 수집기 (2단계)
 # ---------------------------------------------------------------------------
 
-def collect_session(mode: str, file_path: str) -> Optional[List[Path]]:
-    """
-    파일 경로를 session.txt에 원자적으로 기록하고,
-    lock 파일 선점에 성공한 마스터 프로세스만 수집된 경로 목록을 반환.
-    슬레이브(비마스터)는 None 반환.
-    """
+def _try_master(mode: str, file_path: str) -> bool:
+    """session.txt에 경로 기록 후 lock 선점 시 True, 슬레이브면 False."""
     tmp = Path(tempfile.gettempdir())
     session_file = tmp / f"pdf_maker_{mode}_session.txt"
     lock_file = tmp / f"pdf_maker_{mode}_lock.txt"
 
-    # session.txt에 현재 파일 경로 기록
     try:
         with open(session_file, "a", encoding="utf-8") as f:
             f.write(file_path + "\n")
     except Exception:
         pass
 
-    # 스테일 lock 처리 (5초 초과 = 이전 크래시)
     if lock_file.exists():
         try:
-            age = time.time() - lock_file.stat().st_mtime
-            if age > 5:
+            if time.time() - lock_file.stat().st_mtime > 15:
                 lock_file.unlink(missing_ok=True)
         except Exception:
             pass
 
-    # 이미 lock이 존재하면 슬레이브 → 조용히 종료
     if lock_file.exists():
-        return None
+        return False
 
-    # lock 생성(마스터 선출)
     try:
         lock_file.touch()
+        return True
     except Exception:
-        return None
+        return False
 
-    # 다른 프로세스들이 session.txt에 기록할 시간 대기
-    time.sleep(0.4)
 
-    # session.txt 읽기
+def _collect_master(mode: str) -> List[Path]:
+    """마스터로서 adaptive wait 후 수집된 경로 목록 반환, lock/session 정리."""
+    tmp = Path(tempfile.gettempdir())
+    session_file = tmp / f"pdf_maker_{mode}_session.txt"
+    lock_file = tmp / f"pdf_maker_{mode}_lock.txt"
+
+    # 새 파일 도착마다 deadline 600ms 연장 (Explorer 순차 실행 대응)
+    deadline = time.time() + 0.6
+    prev_count = 0
+    while time.time() < deadline:
+        time.sleep(0.05)
+        try:
+            text = session_file.read_text(encoding="utf-8")
+            count = sum(1 for l in text.splitlines() if l.strip())
+            if count > prev_count:
+                prev_count = count
+                deadline = time.time() + 0.6
+        except Exception:
+            pass
+
     try:
         paths_text = session_file.read_text(encoding="utf-8")
-        paths = [Path(line.strip()) for line in paths_text.splitlines() if line.strip()]
+        paths = [Path(l.strip()) for l in paths_text.splitlines() if l.strip()]
     except Exception:
         paths = []
 
-    # lock/session 정리
     try:
         lock_file.unlink(missing_ok=True)
         session_file.unlink(missing_ok=True)
@@ -72,21 +79,66 @@ def collect_session(mode: str, file_path: str) -> Optional[List[Path]]:
 
 
 # ---------------------------------------------------------------------------
+# 수집 인디케이터 (마스터 선출 직후 표시)
+# ---------------------------------------------------------------------------
+
+def _run_with_indicator(mode: str, root, label: str) -> List[Path]:
+    """백그라운드 스레드에서 _collect_master 실행하며 인디케이터 표시. 수집 완료 후 경로 반환."""
+    import tkinter as tk
+    from tkinter import ttk
+
+    ind = tk.Toplevel(root)
+    ind.title("PDF 변환 도구")
+    ind.resizable(False, False)
+    ind.attributes("-topmost", True)
+    ind.protocol("WM_DELETE_WINDOW", lambda: None)
+    ind.overrideredirect(False)
+
+    tk.Label(ind, text=label, padx=24, pady=12).pack()
+    pb = ttk.Progressbar(ind, mode="indeterminate", length=200)
+    pb.pack(padx=24, pady=(0, 16))
+    pb.start(50)
+
+    ind.update_idletasks()
+    w, h = ind.winfo_reqwidth(), ind.winfo_reqheight()
+    x = (ind.winfo_screenwidth() - w) // 2
+    y = (ind.winfo_screenheight() - h) // 2
+    ind.geometry(f"+{x}+{y}")
+    ind.update()
+
+    result: List[List[Path]] = [[]]
+
+    def collect():
+        result[0] = _collect_master(mode)
+
+    t = threading.Thread(target=collect, daemon=True)
+    t.start()
+    while t.is_alive():
+        root.update()
+        time.sleep(0.02)
+
+    ind.destroy()
+    return result[0]
+
+
+# ---------------------------------------------------------------------------
 # convert 모드
 # ---------------------------------------------------------------------------
 
 def cmd_convert(file_path: str):
-    paths = collect_session("convert", file_path)
-    if paths is None:
+    if not _try_master("convert", file_path):
         return
 
+    import tkinter as tk
+    from tkinter import messagebox
     from converter import CancelledError, image_to_pdf
     import gui
 
-    img_paths = [p for p in paths if p.suffix.lower() in SUPPORTED_IMG]
-
     root = tk.Tk()
     root.withdraw()
+
+    paths = _run_with_indicator("convert", root, "파일 수집 중...")
+    img_paths = [p for p in paths if p.suffix.lower() in SUPPORTED_IMG]
 
     if not img_paths:
         messagebox.showerror("오류", "지원되는 이미지 파일이 없습니다.")
@@ -123,21 +175,22 @@ def cmd_convert(file_path: str):
 # ---------------------------------------------------------------------------
 
 def cmd_merge(file_path: str):
-    paths = collect_session("merge", file_path)
-    if paths is None:
+    if not _try_master("merge", file_path):
         return
 
+    import tkinter as tk
+    from tkinter import messagebox
     from converter import CancelledError, image_to_pdf, resolve_output_path
     import gui
 
+    root = tk.Tk()
+    root.withdraw()
+
+    paths = _run_with_indicator("merge", root, "파일 수집 중...")
+
     if len(paths) == 1:
-        # 단일 파일 예외처리: GUI 없이 즉시 처리
         p = paths[0]
         ext = p.suffix.lower()
-
-        root = tk.Tk()
-        root.withdraw()
-
         try:
             if ext in SUPPORTED_IMG:
                 out = image_to_pdf(p)
@@ -150,13 +203,11 @@ def cmd_merge(file_path: str):
                 messagebox.showerror("오류", f"지원하지 않는 파일 형식: {p.suffix}")
         except Exception as exc:
             messagebox.showerror("오류", str(exc))
-
         root.destroy()
         return
 
-    # 2개 이상 → MergeWindow (parent=None 이므로 자체 Tk root 생성)
     sorted_paths = sorted(paths, key=lambda p: p.name)
-    win = gui.MergeWindow(None, sorted_paths)
+    win = gui.MergeWindow(root, sorted_paths)
     win.mainloop()
 
 
@@ -186,6 +237,8 @@ def main():
         cmd_merge(args.file)
 
     elif args.command == "install":
+        import tkinter as tk
+        from tkinter import messagebox
         from install import install
         install()
         root = tk.Tk()
@@ -194,6 +247,8 @@ def main():
         root.destroy()
 
     elif args.command == "uninstall":
+        import tkinter as tk
+        from tkinter import messagebox
         from install import uninstall
         uninstall()
         root = tk.Tk()
@@ -202,7 +257,6 @@ def main():
         root.destroy()
 
     else:
-        # 인수 없음 → 도우미 GUI
         from gui import HelperWindow
         win = HelperWindow()
         win.mainloop()

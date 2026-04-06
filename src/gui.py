@@ -191,6 +191,16 @@ class _FileListFrame(tk.Frame):
 
         Tooltip(self._lb, lambda: self._paths)
 
+    def _refresh_display(self, keep_selection: list = None):
+        """번호 포함 Listbox 전체 갱신."""
+        self._lb.delete(0, tk.END)
+        for i, p in enumerate(self._paths):
+            self._lb.insert(tk.END, f"{i + 1}. {p.name}")
+        if keep_selection:
+            for idx in keep_selection:
+                if 0 <= idx < len(self._paths):
+                    self._lb.selection_set(idx)
+
     def _add_files(self):
         files = filedialog.askopenfilenames(
             title="파일 선택",
@@ -200,47 +210,38 @@ class _FileListFrame(tk.Frame):
             ],
         )
         for f in files:
-            path = Path(f)
-            self._paths.append(path)
-            self._lb.insert(tk.END, path.name)
+            self._paths.append(Path(f))
+        self._refresh_display()
         self._on_list_changed()
 
     def _remove_selected(self):
         for idx in reversed(self._lb.curselection()):
-            self._lb.delete(idx)
             del self._paths[idx]
+        self._refresh_display()
         self._on_list_changed()
 
     def _move_up(self):
-        sel = self._lb.curselection()
+        sel = list(self._lb.curselection())
         if not sel or sel[0] == 0:
             return
         for idx in sel:
             self._paths[idx - 1], self._paths[idx] = self._paths[idx], self._paths[idx - 1]
-            name = self._lb.get(idx)
-            self._lb.delete(idx)
-            self._lb.insert(idx - 1, name)
-            self._lb.selection_set(idx - 1)
+        self._refresh_display([idx - 1 for idx in sel])
 
     def _move_down(self):
-        sel = self._lb.curselection()
+        sel = list(self._lb.curselection())
         if not sel or sel[-1] == self._lb.size() - 1:
             return
         for idx in reversed(sel):
             self._paths[idx], self._paths[idx + 1] = self._paths[idx + 1], self._paths[idx]
-            name = self._lb.get(idx)
-            self._lb.delete(idx)
-            self._lb.insert(idx + 1, name)
-            self._lb.selection_set(idx + 1)
+        self._refresh_display([idx + 1 for idx in sel])
 
     def _on_list_changed(self):
         pass  # 서브클래스에서 override
 
     def set_paths(self, paths: List[Path]):
         self._paths = list(paths)
-        self._lb.delete(0, tk.END)
-        for p in self._paths:
-            self._lb.insert(tk.END, p.name)
+        self._refresh_display()
         self._on_list_changed()
 
     @property
@@ -256,6 +257,7 @@ class MergeWindow:
     """우클릭 merge 모드 (파일 2개 이상) 또는 도우미에서 병합 모드 실행 시."""
 
     def __init__(self, parent: Optional[tk.Misc], initial_paths: List[Path]):
+        self._parent = parent
         if parent is None:
             self._root = tk.Tk()
             self._top = self._root
@@ -275,6 +277,9 @@ class MergeWindow:
         self._update_merge_btn()
 
         _center(self._top, parent)
+        self._top.attributes("-topmost", True)
+        self._top.focus_force()
+        self._top.after(200, lambda: self._top.attributes("-topmost", False))
 
     def _build(self):
         self._top.columnconfigure(0, weight=1)
@@ -315,6 +320,8 @@ class MergeWindow:
         self._top.destroy()
         if self._root:
             self._root.destroy()
+        elif self._parent:
+            self._parent.destroy()
 
     def _start_merge(self):
         paths = self._file_frame.paths
@@ -353,8 +360,9 @@ class MergeWindow:
         popup.run(worker, on_done)
 
     def mainloop(self):
-        if self._root:
-            self._root.mainloop()
+        target = self._root or self._parent
+        if target:
+            target.mainloop()
 
 
 # ---------------------------------------------------------------------------
@@ -533,12 +541,14 @@ class HelperWindow:
 # ---------------------------------------------------------------------------
 
 def _center(win: tk.Misc, parent: Optional[tk.Misc]):
+    win.withdraw()
     win.update_idletasks()
     w, h = win.winfo_reqwidth(), win.winfo_reqheight()
-    if parent:
+    if parent and parent.winfo_viewable():
         px = parent.winfo_rootx() + parent.winfo_width() // 2
         py = parent.winfo_rooty() + parent.winfo_height() // 2
     else:
         px = win.winfo_screenwidth() // 2
         py = win.winfo_screenheight() // 2
-    win.geometry(f"+{px - w // 2}+{py - h // 2}")
+    win.geometry(f"{w}x{h}+{px - w // 2}+{py - h // 2}")
+    win.deiconify()
