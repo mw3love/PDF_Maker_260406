@@ -27,9 +27,9 @@ def image_to_pdf(img_path: Path) -> Path:
     doc = fitz.open()
     img_doc = fitz.open(str(img_path))
     rect = img_doc[0].rect
-    page = doc.new_page(width=rect.width, height=rect.height)
-    page.show_pdf_page(page.rect, img_doc, 0)
     img_doc.close()
+    page = doc.new_page(width=rect.width, height=rect.height)
+    page.insert_image(page.rect, filename=str(img_path))
     output = resolve_output_path(img_path.with_suffix(".pdf"))
     doc.save(str(output))
     doc.close()
@@ -52,7 +52,13 @@ def merge_files(
             raise CancelledError()
         try:
             src = fitz.open(str(path))
-            result.insert_pdf(src)
+            if src.is_pdf:
+                result.insert_pdf(src)
+            else:
+                pdf_bytes = src.convert_to_pdf()
+                pdf_src = fitz.open("pdf", pdf_bytes)
+                result.insert_pdf(pdf_src)
+                pdf_src.close()
             src.close()
         except Exception as e:
             errors.append((path, e))

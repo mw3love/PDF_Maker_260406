@@ -5,11 +5,16 @@ import sys
 import winreg
 
 
-def _get_exe_path() -> str:
-    """PyInstaller frozen 환경이면 sys.executable, 아니면 sys.argv[0] 절대경로."""
+def _make_command(subcommand: str) -> str:
+    """탐색기에서 실행할 명령 문자열을 반환.
+    frozen exe: '"exe" subcommand "%1"'
+    개발 모드:  '"python.exe" "script.py" subcommand "%1"'
+    """
+    from pathlib import Path
     if getattr(sys, "frozen", False):
-        return sys.executable
-    return str(__import__("pathlib").Path(sys.argv[0]).resolve())
+        return f'"{sys.executable}" {subcommand} "%1"'
+    script = str(Path(sys.argv[0]).resolve())
+    return f'"{sys.executable}" "{script}" {subcommand} "%1"'
 
 
 def _set_key(base: int, key_path: str, values: dict[str, str]) -> None:
@@ -21,7 +26,6 @@ def _set_key(base: int, key_path: str, values: dict[str, str]) -> None:
 
 def install() -> None:
     """이미지→PDF 변환 및 PDF 병합 우클릭 메뉴를 HKCU에 등록."""
-    exe = _get_exe_path()
     hkcu = winreg.HKEY_CURRENT_USER
 
     # 이미지 확장자별 convert 등록
@@ -34,20 +38,21 @@ def install() -> None:
             "MultiSelectModel": "Player",
         })
         _set_key(hkcu, cmd_key, {
-            "": f'"{exe}" convert "%1"',
+            "": _make_command("convert"),
         })
 
-    # 모든 파일 대상 merge 등록
-    shell_key = r"Software\Classes\*\shell\pdf_maker_merge"
-    cmd_key = shell_key + r"\command"
+    # 이미지+PDF 확장자별 merge 등록
+    for ext in (".jpg", ".jpeg", ".png", ".bmp", ".pdf"):
+        shell_key = rf"Software\Classes\SystemFileAssociations\{ext}\shell\pdf_maker_merge"
+        cmd_key = shell_key + r"\command"
 
-    _set_key(hkcu, shell_key, {
-        "MUIVerb": "PDF로 병합",
-        "MultiSelectModel": "Player",
-    })
-    _set_key(hkcu, cmd_key, {
-        "": f'"{exe}" merge "%1"',
-    })
+        _set_key(hkcu, shell_key, {
+            "MUIVerb": "PDF로 병합",
+            "MultiSelectModel": "Player",
+        })
+        _set_key(hkcu, cmd_key, {
+            "": _make_command("merge"),
+        })
 
 
 def _delete_key_tree(base: int, key_path: str) -> None:
@@ -80,7 +85,8 @@ def uninstall() -> None:
             rf"Software\Classes\SystemFileAssociations\{ext}\shell\pdf_maker_convert",
         )
 
-    _delete_key_tree(
-        hkcu,
-        r"Software\Classes\*\shell\pdf_maker_merge",
-    )
+    for ext in (".jpg", ".jpeg", ".png", ".bmp", ".pdf"):
+        _delete_key_tree(
+            hkcu,
+            rf"Software\Classes\SystemFileAssociations\{ext}\shell\pdf_maker_merge",
+        )
