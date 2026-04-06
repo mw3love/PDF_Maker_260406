@@ -1,0 +1,17 @@
+# Build artifacts
+build/
+dist/
+*.spec
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Windows
+desktop.ini
+Thumbs.db
+
+# Claude Code local data
+.claude/
