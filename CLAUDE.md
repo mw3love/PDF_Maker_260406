@@ -2,6 +2,18 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 개발 문서 업데이트 규칙
+
+코드 변경 커밋 시 아래 항목이 바뀌었다면 **이 파일(CLAUDE.md)과 PRD/PRD.md를 함께 업데이트**한다:
+
+- 핵심 아키텍처/패턴 변경 (세션 수집기 로직, 타임아웃 값, 대기 전략 등)
+- GUI 동작 규칙 변경 (표시 형식, 포커스 처리, 창 동작 등)
+- install.py 명령 생성 방식 변경
+- 새 함수/클래스/파일 추가로 구조가 바뀐 경우
+- 엣지 케이스 처리 방식 변경
+
+변경 범위가 작고 코드에서 자명한 경우(변수명 변경, 로그 추가 등)는 생략 가능.
+
 ## Project Overview
 
 Windows 탐색기 우클릭 컨텍스트 메뉴에서 이미지→PDF 변환 및 PDF 병합을 수행하는 유틸리티. **관리자 권한 불필요(HKCU 레지스트리 사용)**, Python 없는 환경에서도 동작하는 단일 exe 배포.
@@ -50,9 +62,18 @@ python src/main.py uninstall             # 레지스트리 삭제
 `MultiSelectModel = Player` 때문에 파일 n개 선택 시 exe가 n번 동시 호출됨. Lock 파일로 마스터 프로세스 1개를 선출하는 패턴:
 
 1. `TEMP/pdf_maker_{mode}_session.txt`에 파일경로 원자적 append
-2. `TEMP/pdf_maker_{mode}_lock.txt` 없으면 → lock 생성(마스터) → 400ms 대기 → session.txt 읽기 → lock/session 삭제 → 작업 실행
+2. `TEMP/pdf_maker_{mode}_lock.txt` 없으면 → lock 생성(마스터) → adaptive wait → session.txt 읽기 → lock/session 삭제 → 작업 실행
 3. lock 있으면 → 조용히 종료
-4. lock 파일 생성 후 5초 초과 시 스테일 처리 (이전 크래시 대비)
+4. lock 파일 생성 후 **15초** 초과 시 스테일 처리 (이전 크래시 대비)
+
+**Adaptive wait**: 새 파일이 session.txt에 기록될 때마다 deadline 600ms 연장. Explorer가 순차적으로 exe를 실행할 때 모든 파일이 수집될 때까지 대기.
+
+마스터 선출 직후 **"파일 수집 중..." 인디케이터 팝업** 표시 (`_run_with_indicator`).
+
+코드 구조 (`main.py`):
+- `_try_master(mode, file_path)` → session 기록 + lock 선점, bool 반환
+- `_collect_master(mode)` → adaptive wait 후 경로 목록 반환
+- `_run_with_indicator(mode, root, label)` → 백그라운드 collect + 인디케이터 UI
 
 **convert 모드**: 마스터가 수집된 파일 일괄 변환 → 통합 완료 팝업 1개  
 **merge 모드**: 마스터가 병합 GUI 실행
@@ -100,11 +121,14 @@ def merge_files(file_paths, output_path, progress_cb=None, cancel_flag=None):
 ## GUI Rules
 
 - ESC = 취소/닫기, Enter = 확인/실행
-- 파일 목록: 파일명만 표시, 마우스 오버 시 전체 경로 툴팁
+- 파일 목록: **번호 포함** (`1. filename.jpg`) 표시, 마우스 오버 시 전체 경로 툴팁
 - 중복 파일 추가 허용 (같은 파일 2회 = 2페이지)
 - 진행바 팝업: 모달 아님, 항상 topmost
 - 취소/X 클릭 시: 확인 없이 즉시 취소 → 부분 생성 파일 삭제
 - ProgressPopup: threading.Thread + queue.Queue + after(50, _poll) 패턴으로 Tkinter 스레드 안전성 확보
+- `_FileListFrame._refresh_display()`: 파일 추가/제거/이동 후 Listbox 전체 갱신 (번호 재정렬 + 선택 복원)
+- `MergeWindow`: 초기화 시 topmost+focus_force → 200ms 후 topmost 해제 (포커스 보장)
+- `_center()`: withdraw/deiconify 패턴으로 창 위치 설정 시 깜빡임 제거
 
 ## Registry Keys (install.py)
 
@@ -120,4 +144,4 @@ HKCU\Software\Classes\*\shell\pdf_maker_merge\
   MultiSelectModel = Player
 ```
 
-PyInstaller frozen 환경에서 exe 경로는 `sys.executable`로 자동 감지. 이미 등록된 경우 조용히 덮어쓰기.
+PyInstaller frozen 환경에서 exe 경로는 `sys.executable`로 자동 감지. 개발 모드에서는 `pythonw.exe` 우선 사용(콘솔 창 방지). 이미 등록된 경우 조용히 덮어쓰기.
