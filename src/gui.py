@@ -5,10 +5,9 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import List, Optional
 
-from converter import CancelledError, image_to_pdf, merge_files, resolve_output_path
+from converter import CancelledError, SUPPORTED_IMG, image_to_pdf, merge_files, resolve_output_path
 from install import install, uninstall
 
-SUPPORTED_IMG = {".jpg", ".jpeg", ".png", ".bmp"}
 SUPPORTED_ALL = SUPPORTED_IMG | {".pdf"}
 
 
@@ -162,9 +161,10 @@ class ProgressPopup:
 class _FileListFrame(tk.Frame):
     """파일 목록 Listbox + 순서 변경 + 추가/제거. 재사용 컴포넌트."""
 
-    def __init__(self, parent, **kwargs):
+    def __init__(self, parent, on_change=None, **kwargs):
         super().__init__(parent, **kwargs)
         self._paths: List[Path] = []
+        self._on_change = on_change
         self._build()
 
     def _build(self):
@@ -237,7 +237,8 @@ class _FileListFrame(tk.Frame):
         self._refresh_display([idx + 1 for idx in sel])
 
     def _on_list_changed(self):
-        pass  # 서브클래스에서 override
+        if self._on_change:
+            self._on_change()
 
     def set_paths(self, paths: List[Path]):
         self._paths = list(paths)
@@ -284,8 +285,7 @@ class MergeWindow:
     def _build(self):
         self._top.columnconfigure(0, weight=1)
 
-        self._file_frame = _FileListFrame(self._top)
-        self._file_frame._on_list_changed = self._update_merge_btn  # hook
+        self._file_frame = _FileListFrame(self._top, on_change=self._update_merge_btn)
         self._file_frame.grid(row=0, column=0, padx=12, pady=(12, 6), sticky="nsew")
         self._top.rowconfigure(0, weight=1)
 
@@ -296,7 +296,7 @@ class MergeWindow:
         self._name_var = tk.StringVar(value="merged.pdf")
         name_entry = tk.Entry(name_frame, textvariable=self._name_var)
         name_entry.grid(row=0, column=1, sticky="ew", padx=(6, 0))
-        name_entry.bind("<FocusOut>", self._restore_name)
+        name_entry.bind("<FocusOut>", lambda e: _restore_name_default(self._name_var, e))
 
         tk.Label(self._top, text="저장 위치: 첫 번째 파일의 폴더", fg="gray").grid(
             row=2, column=0, padx=12, sticky="w"
@@ -307,10 +307,6 @@ class MergeWindow:
         tk.Button(btn_frame, text="취소", width=10, command=self._cancel).pack(side="left", padx=(0, 6))
         self._merge_btn = tk.Button(btn_frame, text="병합 시작", width=12, command=self._start_merge)
         self._merge_btn.pack(side="left")
-
-    def _restore_name(self, _event=None):
-        if not self._name_var.get().strip():
-            self._name_var.set("merged.pdf")
 
     def _update_merge_btn(self):
         state = "normal" if self._file_frame.paths else "disabled"
@@ -413,7 +409,7 @@ class HelperWindow:
         self._name_var = tk.StringVar(value="merged.pdf")
         self._name_entry = tk.Entry(name_frame, textvariable=self._name_var)
         self._name_entry.grid(row=0, column=1, sticky="ew", padx=(6, 0))
-        self._name_entry.bind("<FocusOut>", self._restore_name)
+        self._name_entry.bind("<FocusOut>", lambda e: _restore_name_default(self._name_var, e))
 
         tk.Label(root, text="저장 위치: 첫 번째 파일의 폴더", fg="gray").grid(
             row=3, column=0, padx=12, sticky="w"
@@ -442,10 +438,6 @@ class HelperWindow:
             self._name_entry.config(state="disabled")
         else:
             self._name_entry.config(state="normal")
-
-    def _restore_name(self, _event=None):
-        if not self._name_var.get().strip():
-            self._name_var.set("merged.pdf")
 
     def _do_install(self):
         try:
@@ -480,7 +472,6 @@ class HelperWindow:
 
     def _run_convert(self, img_paths: List[Path]):
         popup = ProgressPopup(self._root, title="변환 중...")
-        total = len(img_paths)
         results: List[Path] = []
 
         def worker(progress_cb, cancel_flag):
@@ -489,7 +480,7 @@ class HelperWindow:
                     raise CancelledError()
                 out = image_to_pdf(p)
                 results.append(out)
-                progress_cb(i + 1, total, p.name)
+                progress_cb(i + 1, len(img_paths), p.name)
             return results
 
         def on_done(status, data):
@@ -539,6 +530,11 @@ class HelperWindow:
 # ---------------------------------------------------------------------------
 # 유틸
 # ---------------------------------------------------------------------------
+
+def _restore_name_default(var: tk.StringVar, _event=None):
+    if not var.get().strip():
+        var.set("merged.pdf")
+
 
 def _center(win: tk.Misc, parent: Optional[tk.Misc]):
     win.withdraw()

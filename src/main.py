@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import List, Optional
 
-SUPPORTED_IMG = {".jpg", ".jpeg", ".png", ".bmp"}
+from converter import SUPPORTED_IMG
 
 
 # ---------------------------------------------------------------------------
@@ -50,6 +50,7 @@ def _collect_master(mode: str) -> List[Path]:
     lock_file = tmp / f"pdf_maker_{mode}_lock.txt"
 
     # 새 파일 도착마다 deadline 600ms 연장 (Explorer 순차 실행 대응)
+    text = ""
     deadline = time.time() + 0.6
     prev_count = 0
     while time.time() < deadline:
@@ -63,11 +64,7 @@ def _collect_master(mode: str) -> List[Path]:
         except Exception:
             pass
 
-    try:
-        paths_text = session_file.read_text(encoding="utf-8")
-        paths = [Path(l.strip()) for l in paths_text.splitlines() if l.strip()]
-    except Exception:
-        paths = []
+    paths = [Path(l.strip()) for l in text.splitlines() if l.strip()]
 
     try:
         lock_file.unlink(missing_ok=True)
@@ -106,10 +103,11 @@ def _run_with_indicator(mode: str, root, label: str) -> List[Path]:
     ind.geometry(f"+{x}+{y}")
     ind.update()
 
-    result: List[List[Path]] = [[]]
+    collected: List[Path] = []
 
     def collect():
-        result[0] = _collect_master(mode)
+        nonlocal collected
+        collected = _collect_master(mode)
 
     t = threading.Thread(target=collect, daemon=True)
     t.start()
@@ -118,7 +116,7 @@ def _run_with_indicator(mode: str, root, label: str) -> List[Path]:
         time.sleep(0.02)
 
     ind.destroy()
-    return result[0]
+    return collected
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +143,6 @@ def cmd_convert(file_path: str):
         root.destroy()
         return
 
-    total = len(img_paths)
     results: List[Path] = []
 
     popup = gui.ProgressPopup(root, title="변환 중...")
@@ -156,7 +153,7 @@ def cmd_convert(file_path: str):
                 raise CancelledError()
             out = image_to_pdf(p)
             results.append(out)
-            progress_cb(i + 1, total, p.name)
+            progress_cb(i + 1, len(img_paths), p.name)
         return results
 
     def on_done(status, data):
@@ -206,8 +203,7 @@ def cmd_merge(file_path: str):
         root.destroy()
         return
 
-    sorted_paths = sorted(paths, key=lambda p: p.name)
-    win = gui.MergeWindow(root, sorted_paths)
+    win = gui.MergeWindow(root, paths)
     win.mainloop()
 
 
