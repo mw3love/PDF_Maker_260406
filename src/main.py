@@ -1,4 +1,6 @@
 import argparse
+import errno
+import os
 import shutil
 import sys
 import tempfile
@@ -26,20 +28,21 @@ def _try_master(mode: str, file_path: str) -> bool:
     except Exception:
         pass
 
-    if lock_file.exists():
-        try:
-            if time.time() - lock_file.stat().st_mtime > 15:
-                lock_file.unlink(missing_ok=True)
-        except Exception:
-            pass
-
-    if lock_file.exists():
-        return False
-
+    # 스테일 lock 처리 (이전 크래시 대비, 15초 초과)
     try:
-        lock_file.touch()
+        if lock_file.stat().st_mtime < time.time() - 15:
+            lock_file.unlink(missing_ok=True)
+    except (FileNotFoundError, OSError):
+        pass
+
+    # O_CREAT | O_EXCL 으로 원자적 lock 파일 생성 (TOCTOU 방지)
+    try:
+        fd = os.open(str(lock_file), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.close(fd)
         return True
-    except Exception:
+    except OSError as e:
+        if e.errno == errno.EEXIST:
+            return False
         return False
 
 
@@ -136,7 +139,7 @@ def cmd_convert(file_path: str):
     root.withdraw()
 
     paths = _run_with_indicator("convert", root, "파일 수집 중...")
-    img_paths = [p for p in paths if p.suffix.lower() in SUPPORTED_IMG]
+    img_paths = [p for p in paths if p.suffix.lower() in SUPPORTED_IMG and p.exists()]
 
     if not img_paths:
         messagebox.showerror("오류", "지원되는 이미지 파일이 없습니다.")
@@ -183,7 +186,12 @@ def cmd_merge(file_path: str):
     root = tk.Tk()
     root.withdraw()
 
-    paths = _run_with_indicator("merge", root, "파일 수집 중...")
+    paths = [p for p in _run_with_indicator("merge", root, "파일 수집 중...") if p.exists()]
+
+    if not paths:
+        messagebox.showerror("오류", "처리할 파일이 없습니다.")
+        root.destroy()
+        return
 
     if len(paths) == 1:
         p = paths[0]

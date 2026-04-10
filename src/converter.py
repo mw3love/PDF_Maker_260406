@@ -5,6 +5,7 @@ import threading
 import fitz  # PyMuPDF
 
 SUPPORTED_IMG = {".jpg", ".jpeg", ".png", ".bmp"}
+SUPPORTED_ALL = SUPPORTED_IMG | {".pdf"}
 
 
 class CancelledError(Exception):

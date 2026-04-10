@@ -5,10 +5,8 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import List, Optional
 
-from converter import CancelledError, SUPPORTED_IMG, image_to_pdf, merge_files, resolve_output_path
+from converter import CancelledError, SUPPORTED_ALL, SUPPORTED_IMG, image_to_pdf, merge_files, resolve_output_path
 from install import install, uninstall
-
-SUPPORTED_ALL = SUPPORTED_IMG | {".pdf"}
 
 
 # ---------------------------------------------------------------------------
@@ -227,6 +225,7 @@ class _FileListFrame(tk.Frame):
         for idx in sel:
             self._paths[idx - 1], self._paths[idx] = self._paths[idx], self._paths[idx - 1]
         self._refresh_display([idx - 1 for idx in sel])
+        self._on_list_changed()
 
     def _move_down(self):
         sel = list(self._lb.curselection())
@@ -235,6 +234,7 @@ class _FileListFrame(tk.Frame):
         for idx in reversed(sel):
             self._paths[idx], self._paths[idx + 1] = self._paths[idx + 1], self._paths[idx]
         self._refresh_display([idx + 1 for idx in sel])
+        self._on_list_changed()
 
     def _on_list_changed(self):
         if self._on_change:
@@ -323,37 +323,12 @@ class MergeWindow:
         paths = self._file_frame.paths
         if not paths:
             return
-        filename = self._name_var.get().strip() or "merged.pdf"
-        if not filename.lower().endswith(".pdf"):
-            filename += ".pdf"
-        output_dir = paths[0].parent
-        output_path = resolve_output_path(output_dir / filename)
-
-        popup = ProgressPopup(self._top, title="병합 중...")
-        popup.set_output_path(output_path)
-
-        def worker(progress_cb, cancel_flag):
-            return merge_files(paths, output_path, progress_cb, cancel_flag)
-
-        def on_done(status, data):
-            if status == "done":
-                errors = data
-                if errors:
-                    failed = "\n".join(str(p) for p, _ in errors)
-                    messagebox.showwarning(
-                        "병합 완료 (일부 실패)",
-                        f"{output_path.name} 생성 완료\n{output_path}\n\n실패 파일:\n{failed}",
-                    )
-                else:
-                    messagebox.showinfo(
-                        "병합 완료",
-                        f"{output_path.name} 생성 완료\n{output_path}",
-                    )
-                self._cancel()
-            elif status == "error":
-                messagebox.showerror("오류", str(data))
-
-        popup.run(worker, on_done)
+        _run_merge_popup(
+            self._top,
+            paths,
+            self._name_var.get(),
+            on_done_extra=lambda status: self._cancel() if status == "done" else None,
+        )
 
     def mainloop(self):
         target = self._root or self._parent
@@ -492,36 +467,7 @@ class HelperWindow:
         popup.run(worker, on_done)
 
     def _run_merge(self, paths: List[Path]):
-        filename = self._name_var.get().strip() or "merged.pdf"
-        if not filename.lower().endswith(".pdf"):
-            filename += ".pdf"
-        output_dir = paths[0].parent
-        output_path = resolve_output_path(output_dir / filename)
-
-        popup = ProgressPopup(self._root, title="병합 중...")
-        popup.set_output_path(output_path)
-
-        def worker(progress_cb, cancel_flag):
-            return merge_files(paths, output_path, progress_cb, cancel_flag)
-
-        def on_done(status, data):
-            if status == "done":
-                errors = data
-                if errors:
-                    failed = "\n".join(str(p) for p, _ in errors)
-                    messagebox.showwarning(
-                        "병합 완료 (일부 실패)",
-                        f"{output_path.name} 생성 완료\n{output_path}\n\n실패 파일:\n{failed}",
-                    )
-                else:
-                    messagebox.showinfo(
-                        "병합 완료",
-                        f"{output_path.name} 생성 완료\n{output_path}",
-                    )
-            elif status == "error":
-                messagebox.showerror("오류", str(data))
-
-        popup.run(worker, on_done)
+        _run_merge_popup(self._root, paths, self._name_var.get())
 
     def mainloop(self):
         self._root.mainloop()
@@ -534,6 +480,39 @@ class HelperWindow:
 def _restore_name_default(var: tk.StringVar, _event=None):
     if not var.get().strip():
         var.set("merged.pdf")
+
+
+def _run_merge_popup(parent: tk.Misc, paths: List[Path], filename: str, on_done_extra=None):
+    """병합 ProgressPopup 실행 공통 로직. on_done_extra(status) 는 done/error 후 추가 처리."""
+    if not filename.strip():
+        filename = "merged.pdf"
+    if not filename.lower().endswith(".pdf"):
+        filename += ".pdf"
+    output_path = resolve_output_path(paths[0].parent / filename)
+
+    popup = ProgressPopup(parent, title="병합 중...")
+    popup.set_output_path(output_path)
+
+    def worker(progress_cb, cancel_flag):
+        return merge_files(paths, output_path, progress_cb, cancel_flag)
+
+    def on_done(status, data):
+        if status == "done":
+            errors = data
+            if errors:
+                failed = "\n".join(str(p) for p, _ in errors)
+                messagebox.showwarning(
+                    "병합 완료 (일부 실패)",
+                    f"{output_path.name} 생성 완료\n{output_path}\n\n실패 파일:\n{failed}",
+                )
+            else:
+                messagebox.showinfo("병합 완료", f"{output_path.name} 생성 완료\n{output_path}")
+        elif status == "error":
+            messagebox.showerror("오류", str(data))
+        if on_done_extra:
+            on_done_extra(status)
+
+    popup.run(worker, on_done)
 
 
 def _center(win: tk.Misc, parent: Optional[tk.Misc]):

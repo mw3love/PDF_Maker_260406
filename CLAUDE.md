@@ -83,14 +83,19 @@ python src/main.py uninstall             # 레지스트리 삭제
 ```python
 import fitz  # PyMuPDF — 이미지/PDF 모두 fitz.open() 단일 처리
 
+SUPPORTED_IMG = {".jpg", ".jpeg", ".png", ".bmp"}
+SUPPORTED_ALL = SUPPORTED_IMG | {".pdf"}  # gui.py도 여기서 import
+
 def image_to_pdf(img_path: Path) -> Path:
     doc = fitz.open()
-    img_doc = fitz.open(str(img_path))   # 이미지를 1페이지 PDF로 열기
+    img_doc = fitz.open(str(img_path))
     rect = img_doc[0].rect
     page = doc.new_page(width=rect.width, height=rect.height)
-    page.show_pdf_page(page.rect, img_doc, 0)
+    page.insert_image(page.rect, stream=img_doc.tobytes())  # 이미지 원본 스트림 삽입
+    img_doc.close()
     output = resolve_output_path(img_path.with_suffix(".pdf"))
     doc.save(str(output))
+    doc.close()
     return output
 
 def merge_files(file_paths, output_path, progress_cb=None, cancel_flag=None):
@@ -101,12 +106,20 @@ def merge_files(file_paths, output_path, progress_cb=None, cancel_flag=None):
             result.close(); raise CancelledError()
         try:
             src = fitz.open(str(path))
-            result.insert_pdf(src)
+            if src.is_pdf:
+                result.insert_pdf(src)
+            else:
+                pdf_bytes = src.convert_to_pdf()
+                pdf_src = fitz.open("pdf", pdf_bytes)
+                result.insert_pdf(pdf_src)
+                pdf_src.close()
+            src.close()
         except Exception as e:
             errors.append((path, e))   # 실패 파일 건너뛰고 계속
         if progress_cb:
             progress_cb(i + 1, len(file_paths), path.name)
     result.save(str(output_path))
+    result.close()
     return errors  # 빈 리스트면 전체 성공
 ```
 
@@ -138,7 +151,7 @@ HKCU\Software\Classes\SystemFileAssociations\.{jpg,jpeg,png,bmp}\shell\pdf_maker
   command = "<exe경로>" convert "%1"
   MultiSelectModel = Player
 
-HKCU\Software\Classes\*\shell\pdf_maker_merge\
+HKCU\Software\Classes\SystemFileAssociations\.{jpg,jpeg,png,bmp,pdf}\shell\pdf_maker_merge\
   MUIVerb = "PDF로 병합"
   command = "<exe경로>" merge "%1"
   MultiSelectModel = Player
