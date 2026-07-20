@@ -24,7 +24,7 @@ Windows 탐색기 우클릭 컨텍스트 메뉴에서 이미지→PDF 변환 및
 
 - **Python** + **PyMuPDF (fitz)** — 이미지/PDF 단일 처리 인터페이스
 - **Tkinter** — GUI (내장, 추가 의존성 없음)
-- **pywin32 (win32com)** — HWP→PDF 변환용 한컴오피스 COM (병합 경로 한정, 한컴 설치 PC에서만 동작)
+- **pywin32 (win32com)** — HWP→PDF 변환용 한컴오피스 COM (변환·병합 모두, 한컴 설치 PC에서만 동작)
 - **PyInstaller** — 단일 exe 빌드
 - **winreg (HKCU)** — 레지스트리 등록/해제
 
@@ -125,15 +125,16 @@ def merge_files(file_paths, output_path, progress_cb=None, cancel_flag=None):
     return errors  # 빈 리스트면 전체 성공
 ```
 
-## HWP → PDF 변환 (한컴 COM, merge 경로 한정)
+## HWP → PDF 변환 (한컴 COM, convert·merge 양쪽)
 
-`.hwp`/`.hwpx`는 fitz가 못 여므로 한컴오피스 COM으로 PDF 변환 후 병합에 삽입한다.
+`.hwp`/`.hwpx`는 fitz가 못 여므로 한컴오피스 COM으로 PDF 변환한다. **convert(각각 개별 PDF)·merge(1개로 병합) 모두 지원.**
 
-- `_batch_hwp_to_pdf(hwp_paths)` → 한컴 **1세션**으로 HWP들을 TEMP에 임시 PDF 일괄 변환 (승인창 1회·성능). `(pdf_map, errors, temp_pdfs)` 반환. pywin32/한컴 미설치·개별 실패는 `errors`에 담아 스킵.
+- `_hwp_session_convert(jobs, progress_cb)` → 코어. `jobs=[(src, dst)]`를 한컴 **1세션**으로 각각 `dst`에 SaveAs PDF (승인창 1회·성능). `(성공 dst 목록, [(src, 예외)])` 반환. pywin32/한컴 미설치·개별 실패는 예외로 잡아 스킵.
+- `hwp_batch_to_pdf(paths, cb)` → **convert 모드**: 각 HWP를 원본 옆 `.pdf`(충돌 시 `_N`)로 개별 변환.
 - `hwp_to_pdf(path)` → 단일 변환 (main.py 단일파일 merge 경로용).
-- `merge_files`: 루프 진입 전 HWP를 일괄 변환 → 루프에서 임시 PDF를 `insert_pdf` → `finally`에서 임시 PDF 정리.
-- COM 주의: merge는 워커 스레드에서 도므로 `pythoncom.CoInitialize()`/`CoUninitialize()` 짝 필수. `hwp.Open(path,"","")` 3인자, `hwp.SaveAs(pdf,"PDF","")`, `hwp.Clear(1)`로 문서 닫기. `RegisterModule`로 보안 승인창 억제(미등록 시 창 뜰 수 있음).
-- **실조건검증(2026-07-20)**: `SaveAs("PDF")` 정상 동작 + `[.hwp+.pdf+.png]` 전체 병합 통과(쪽수·순서 보존, errors 없음). HAction `FileSaveAsPdf`도 동일 결과(폴백 후보). **`.hwpx`만 미검증**(로직은 `.hwp`와 동일 경로).
+- `merge_files`: 루프 진입 전 HWP를 TEMP에 임시 PDF 일괄 변환(`pdfmaker_hwp_*.pdf`) → 루프에서 `insert_pdf` → `finally`에서 임시 PDF 정리.
+- COM 주의: merge/convert는 워커 스레드에서 도므로 `pythoncom.CoInitialize()`/`CoUninitialize()` 짝 필수. `hwp.Open(path,"","")` 3인자, `hwp.SaveAs(pdf,"PDF","")`, `hwp.Clear(1)`로 문서 닫기. `RegisterModule`로 보안 승인창 억제(미등록 시 창 뜰 수 있음). **취소(cancel_flag)는 HWP 세션 중간엔 안 먹음**(세션 단위).
+- **실조건검증(2026-07-20)**: `SaveAs("PDF")` 정상 + `[.hwp+.pdf+.png]` 병합 5쪽 통과 + `3×.hwp` 개별 변환 각각 통과(쪽수·순서 보존, errors 없음). HAction `FileSaveAsPdf`도 동일 결과(폴백 후보). **`.hwpx`만 미검증**(로직은 `.hwp`와 동일 경로).
 
 ## Output Rules
 
@@ -163,11 +164,15 @@ HKCU\Software\Classes\SystemFileAssociations\.{jpg,jpeg,png,bmp}\shell\pdf_maker
   command = "<exe경로>" convert "%1"
   MultiSelectModel = Player
 
+HKCU\Software\Classes\SystemFileAssociations\.{hwp,hwpx}\shell\pdf_maker_convert\
+  MUIVerb = "HWP → PDF 변환"      # 라벨만 다름, 동일 convert 서브커맨드 (각각 개별 PDF)
+  command = "<exe경로>" convert "%1"
+  MultiSelectModel = Player
+
 HKCU\Software\Classes\SystemFileAssociations\.{jpg,jpeg,png,bmp,pdf,hwp,hwpx}\shell\pdf_maker_merge\
   MUIVerb = "PDF로 병합"
   command = "<exe경로>" merge "%1"
   MultiSelectModel = Player
-  # .hwp/.hwpx는 병합 메뉴에만 등록 (convert 메뉴엔 미등록)
 ```
 
 PyInstaller frozen 환경에서 exe 경로는 `sys.executable`로 자동 감지. 개발 모드에서는 `pythonw.exe` 우선 사용(콘솔 창 방지). 이미 등록된 경우 조용히 덮어쓰기.

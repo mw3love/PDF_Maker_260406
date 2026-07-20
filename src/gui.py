@@ -5,7 +5,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import List, Optional
 
-from converter import CancelledError, SUPPORTED_ALL, SUPPORTED_IMG, image_to_pdf, merge_files, resolve_output_path
+from converter import CancelledError, SUPPORTED_ALL, SUPPORTED_IMG, SUPPORTED_HWP, image_to_pdf, hwp_batch_to_pdf, merge_files, resolve_output_path
 from install import install, uninstall
 
 
@@ -437,30 +437,48 @@ class HelperWindow:
         mode = self._mode_var.get()
 
         if mode == "convert":
-            img_paths = [p for p in paths if p.suffix.lower() in SUPPORTED_IMG]
-            if not img_paths:
-                messagebox.showerror("오류", "지원되는 이미지 파일이 없습니다.")
+            conv_paths = [p for p in paths if p.suffix.lower() in (SUPPORTED_IMG | SUPPORTED_HWP)]
+            if not conv_paths:
+                messagebox.showerror("오류", "변환할 이미지/HWP 파일이 없습니다.")
                 return
-            self._run_convert(img_paths)
+            self._run_convert(conv_paths)
         else:
             self._run_merge(paths)
 
-    def _run_convert(self, img_paths: List[Path]):
+    def _run_convert(self, conv_paths: List[Path]):
+        img_paths = [p for p in conv_paths if p.suffix.lower() in SUPPORTED_IMG]
+        hwp_paths = [p for p in conv_paths if p.suffix.lower() in SUPPORTED_HWP]
         popup = ProgressPopup(self._root, title="변환 중...")
         results: List[Path] = []
+        conv_errors: List = []
 
         def worker(progress_cb, cancel_flag):
-            for i, p in enumerate(img_paths):
+            total = len(img_paths) + len(hwp_paths)
+            done = 0
+            for p in img_paths:
                 if cancel_flag.is_set():
                     raise CancelledError()
                 out = image_to_pdf(p)
                 results.append(out)
-                progress_cb(i + 1, len(img_paths), p.name)
+                done += 1
+                progress_cb(done, total, p.name)
+            if hwp_paths:
+                base = len(img_paths)
+                hres, herr = hwp_batch_to_pdf(
+                    hwp_paths,
+                    lambda i, n, name: progress_cb(base + i, total, name),
+                )
+                results.extend(hres)
+                conv_errors.extend(herr)
             return results
 
         def on_done(status, data):
             if status == "done":
-                messagebox.showinfo("변환 완료", f"{len(results)}개 파일이 PDF로 변환되었습니다.")
+                msg = f"{len(results)}개 파일이 PDF로 변환되었습니다."
+                if conv_errors:
+                    fails = "\n".join(f"- {p.name}: {e}" for p, e in conv_errors)
+                    msg += f"\n\n실패 {len(conv_errors)}건:\n{fails}"
+                messagebox.showinfo("변환 완료", msg)
             elif status == "error":
                 messagebox.showerror("오류", str(data))
 

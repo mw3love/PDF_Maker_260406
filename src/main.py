@@ -132,7 +132,7 @@ def cmd_convert(file_path: str):
 
     import tkinter as tk
     from tkinter import messagebox
-    from converter import CancelledError, image_to_pdf
+    from converter import CancelledError, image_to_pdf, hwp_batch_to_pdf
     import gui
 
     root = tk.Tk()
@@ -140,28 +140,46 @@ def cmd_convert(file_path: str):
 
     paths = _run_with_indicator("convert", root, "파일 수집 중...")
     img_paths = [p for p in paths if p.suffix.lower() in SUPPORTED_IMG and p.exists()]
+    hwp_paths = [p for p in paths if p.suffix.lower() in SUPPORTED_HWP and p.exists()]
 
-    if not img_paths:
-        messagebox.showerror("오류", "지원되는 이미지 파일이 없습니다.")
+    if not img_paths and not hwp_paths:
+        messagebox.showerror("오류", "지원되는 파일이 없습니다.")
         root.destroy()
         return
 
     results: List[Path] = []
+    conv_errors: List = []
 
     popup = gui.ProgressPopup(root, title="변환 중...")
 
     def worker(progress_cb, cancel_flag):
-        for i, p in enumerate(img_paths):
+        total = len(img_paths) + len(hwp_paths)
+        done = 0
+        for p in img_paths:
             if cancel_flag.is_set():
                 raise CancelledError()
             out = image_to_pdf(p)
             results.append(out)
-            progress_cb(i + 1, len(img_paths), p.name)
+            done += 1
+            progress_cb(done, total, p.name)
+        if hwp_paths:
+            # 한컴 1세션 일괄 변환 (취소는 세션 단위 — 중간 취소 불가)
+            base = len(img_paths)
+            hres, herr = hwp_batch_to_pdf(
+                hwp_paths,
+                lambda i, n, name: progress_cb(base + i, total, name),
+            )
+            results.extend(hres)
+            conv_errors.extend(herr)
         return results
 
     def on_done(status, data):
         if status == "done":
-            messagebox.showinfo("변환 완료", f"{len(results)}개 파일이 PDF로 변환되었습니다.")
+            msg = f"{len(results)}개 파일이 PDF로 변환되었습니다."
+            if conv_errors:
+                fails = "\n".join(f"- {p.name}: {e}" for p, e in conv_errors)
+                msg += f"\n\n실패 {len(conv_errors)}건:\n{fails}"
+            messagebox.showinfo("변환 완료", msg)
         elif status == "error":
             messagebox.showerror("오류", str(data))
         root.destroy()

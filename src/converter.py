@@ -30,28 +30,28 @@ def resolve_output_path(path: Path) -> Path:
         i += 1
 
 
-def _batch_hwp_to_pdf(
-    hwp_paths: List[Path],
-) -> Tuple[Dict[Path, Path], Dict[Path, Exception], List[Path]]:
-    """한컴오피스 COM 1세션으로 HWP들을 임시 PDF로 일괄 변환.
+def _hwp_session_convert(
+    jobs: List[Tuple[Path, Path]],
+    progress_cb: Optional[Callable[[int, int, str], None]] = None,
+) -> Tuple[List[Path], List[Tuple[Path, Exception]]]:
+    """한컴오피스 COM 1세션으로 각 (src, dst) HWP를 dst(PDF)로 저장.
 
     한컴 미설치·pywin32 미설치·개별 변환 실패는 예외로 잡아 errors에 담고
-    나머지는 계속 진행한다(merge_files가 실패 파일만 스킵하도록).
+    나머지는 계속 진행한다. dst가 이미 있으면 덮어씀(충돌 해소는 호출측 책임).
 
-    반환: (path→임시PDF 맵, path→예외 맵, 정리해야 할 임시PDF 목록)
+    반환: (성공한 dst 목록, [(src, 예외)] 실패 목록)
     """
-    pdf_map: Dict[Path, Path] = {}
-    errors: Dict[Path, Exception] = {}
-    temp_pdfs: List[Path] = []
+    done: List[Path] = []
+    errors: List[Tuple[Path, Exception]] = []
+    if not jobs:
+        return done, errors
 
     try:
         import pythoncom
         import win32com.client
     except ImportError:
-        err = RuntimeError("pywin32 미설치 — HWP 변환 불가")
-        for p in hwp_paths:
-            errors[p] = err
-        return pdf_map, errors, temp_pdfs
+        e = RuntimeError("pywin32 미설치 — HWP 변환 불가")
+        return done, [(src, e) for src, _ in jobs]
 
     pythoncom.CoInitialize()
     hwp = None
@@ -64,28 +64,25 @@ def _batch_hwp_to_pdf(
             except Exception:
                 pass
         except Exception:
-            err = RuntimeError("한컴오피스(한글) 미설치 또는 COM 사용 불가")
-            for p in hwp_paths:
-                errors[p] = err
-            return pdf_map, errors, temp_pdfs
+            e = RuntimeError("한컴오피스(한글) 미설치 또는 COM 사용 불가")
+            return done, [(src, e) for src, _ in jobs]
 
-        tmp_dir = Path(tempfile.gettempdir())
-        for p in hwp_paths:
+        for i, (src, dst) in enumerate(jobs):
             try:
-                out = tmp_dir / f"pdfmaker_hwp_{os.getpid()}_{len(temp_pdfs)}.pdf"
-                out.unlink(missing_ok=True)
-                hwp.Open(str(p), "", "")               # 인자 3개 필수
-                hwp.SaveAs(str(out), "PDF", "")
-                if not out.exists():
+                dst.unlink(missing_ok=True)
+                hwp.Open(str(src), "", "")             # 인자 3개 필수
+                hwp.SaveAs(str(dst), "PDF", "")
+                if not dst.exists():
                     raise RuntimeError("PDF 저장 실패 (SaveAs)")
-                pdf_map[p] = out
-                temp_pdfs.append(out)
+                done.append(dst)
                 try:
                     hwp.Clear(1)  # 현재 문서 닫기(변경 무시)
                 except Exception:
                     pass
             except Exception as e:
-                errors[p] = e
+                errors.append((src, e))
+            if progress_cb:
+                progress_cb(i + 1, len(jobs), src.name)
     finally:
         if hwp is not None:
             try:
@@ -94,22 +91,25 @@ def _batch_hwp_to_pdf(
                 pass
         pythoncom.CoUninitialize()
 
-    return pdf_map, errors, temp_pdfs
+    return done, errors
 
 
 def hwp_to_pdf(hwp_path: Path, output_path: Optional[Path] = None) -> Path:
     """단일 HWP를 PDF로 변환. output_path 미지정 시 원본 옆 .pdf(충돌 시 _N)."""
-    pdf_map, errors, _ = _batch_hwp_to_pdf([hwp_path])
-    if hwp_path in errors:
-        raise errors[hwp_path]
-    temp = pdf_map[hwp_path]
-    final = output_path or resolve_output_path(hwp_path.with_suffix(".pdf"))
-    try:
-        shutil.move(str(temp), str(final))
-    except Exception:
-        shutil.copy2(str(temp), str(final))
-        temp.unlink(missing_ok=True)
-    return final
+    dst = output_path or resolve_output_path(hwp_path.with_suffix(".pdf"))
+    done, errors = _hwp_session_convert([(hwp_path, dst)])
+    if errors:
+        raise errors[0][1]
+    return dst
+
+
+def hwp_batch_to_pdf(
+    hwp_paths: List[Path],
+    progress_cb: Optional[Callable[[int, int, str], None]] = None,
+) -> Tuple[List[Path], List[Tuple[Path, Exception]]]:
+    """여러 HWP를 각각 원본 옆 PDF로 개별 변환(한컴 1세션). (성공 목록, 실패 목록) 반환."""
+    jobs = [(p, resolve_output_path(p.with_suffix(".pdf"))) for p in hwp_paths]
+    return _hwp_session_convert(jobs, progress_cb)
 
 
 def image_to_pdf(img_path: Path) -> Path:
@@ -137,7 +137,17 @@ def merge_files(
     hwp_errors: Dict[Path, Exception] = {}
     temp_pdfs: List[Path] = []
     if hwp_paths:
-        hwp_pdf_map, hwp_errors, temp_pdfs = _batch_hwp_to_pdf(hwp_paths)
+        tmp_dir = Path(tempfile.gettempdir())
+        jobs = [
+            (p, tmp_dir / f"pdfmaker_hwp_{os.getpid()}_{idx}.pdf")
+            for idx, p in enumerate(hwp_paths)
+        ]
+        for p, dst in jobs:
+            hwp_pdf_map[p] = dst
+        temp_pdfs = [dst for _, dst in jobs]
+        _, errs = _hwp_session_convert(jobs)
+        for src, e in errs:
+            hwp_errors[src] = e
 
     result = fitz.open()
     errors: List[Tuple[Path, Exception]] = []

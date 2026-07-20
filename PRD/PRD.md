@@ -85,8 +85,10 @@ Adaptive wait: 새 파일이 감지될 때마다 deadline을 600ms 연장 (Explo
 
 ## 지원 형식 및 출력 규칙
 
-- **입력**: `.jpg`, `.jpeg`, `.png`, `.bmp`, `.pdf` — 그리고 **병합(merge) 한정** `.hwp`, `.hwpx`
-- **HWP → PDF**: 한컴오피스 COM(`HWPFrame.HwpObject`) `SaveAs(..., "PDF")`로 변환. **한컴오피스 설치 PC 전용** — 미설치/pywin32 미설치 시 해당 파일만 건너뛰고(errors) 나머지는 병합 진행. convert(무음성 일괄 변환) 모드에는 미지원(승인창이 매번 떠 UX 저해).
+- **입력**: `.jpg`, `.jpeg`, `.png`, `.bmp`, `.pdf`, `.hwp`, `.hwpx`
+- **HWP → PDF**: 한컴오피스 COM(`HWPFrame.HwpObject`) `SaveAs(..., "PDF")`로 변환. **한컴오피스 설치 PC 전용** — 미설치/pywin32 미설치 시 해당 파일만 건너뛰고(errors) 나머지는 계속.
+  - **convert 모드**: 여러 HWP를 **각각 개별 PDF**로 일괄 변환 (원본 옆 `.pdf`). 우클릭 메뉴 라벨 "HWP → PDF 변환". 보안모듈 등록 PC에서는 승인창 없이 무음성 동작.
+  - **merge 모드**: HWP를 임시 PDF로 변환 후 다른 파일과 **1개로 병합**.
 - **비지원 형식**: 무시 (지원 파일만 처리). 지원 파일이 0개면 오류 팝업 후 종료.
 - **출력 위치**: 첫 번째 파일과 같은 폴더 (GUI에서 추가한 파일에도 고정)
 - **출력 파일명**: `merged.pdf` → 충돌 시 `merged_1.pdf`, `merged_2.pdf`...

@@ -42,6 +42,19 @@ def install() -> None:
             "": _make_command("convert"),
         })
 
+    # HWP 확장자별 convert 등록 (라벨만 다름, 동일 convert 서브커맨드)
+    for ext in (".hwp", ".hwpx"):
+        shell_key = rf"Software\Classes\SystemFileAssociations\{ext}\shell\pdf_maker_convert"
+        cmd_key = shell_key + r"\command"
+
+        _set_key(hkcu, shell_key, {
+            "MUIVerb": "HWP → PDF 변환",
+            "MultiSelectModel": "Player",
+        })
+        _set_key(hkcu, cmd_key, {
+            "": _make_command("convert"),
+        })
+
     # 이미지+PDF+HWP 확장자별 merge 등록 (HWP는 한컴오피스 설치 시 동작)
     for ext in (".jpg", ".jpeg", ".png", ".bmp", ".pdf", ".hwp", ".hwpx"):
         shell_key = rf"Software\Classes\SystemFileAssociations\{ext}\shell\pdf_maker_merge"
@@ -80,7 +93,7 @@ def uninstall() -> None:
     """install()이 등록한 레지스트리 키를 모두 삭제."""
     hkcu = winreg.HKEY_CURRENT_USER
 
-    for ext in (".jpg", ".jpeg", ".png", ".bmp"):
+    for ext in (".jpg", ".jpeg", ".png", ".bmp", ".hwp", ".hwpx"):
         _delete_key_tree(
             hkcu,
             rf"Software\Classes\SystemFileAssociations\{ext}\shell\pdf_maker_convert",
