@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import List, Optional
 
-from converter import SUPPORTED_IMG
+from converter import SUPPORTED_IMG, SUPPORTED_HWP
 
 
 # ---------------------------------------------------------------------------
@@ -199,6 +199,10 @@ def cmd_merge(file_path: str):
         try:
             if ext in SUPPORTED_IMG:
                 out = image_to_pdf(p)
+                messagebox.showinfo("변환 완료", f"{out.name} 생성 완료\n{out}")
+            elif ext in SUPPORTED_HWP:
+                from converter import hwp_to_pdf
+                out = hwp_to_pdf(p)
                 messagebox.showinfo("변환 완료", f"{out.name} 생성 완료\n{out}")
             elif ext == ".pdf":
                 output_path = resolve_output_path(p.parent / "merged.pdf")

@@ -203,7 +203,7 @@ class _FileListFrame(tk.Frame):
         files = filedialog.askopenfilenames(
             title="파일 선택",
             filetypes=[
-                ("지원 파일", "*.jpg *.jpeg *.png *.bmp *.pdf"),
+                ("지원 파일", "*.jpg *.jpeg *.png *.bmp *.pdf *.hwp *.hwpx"),
                 ("모든 파일", "*.*"),
             ],
         )

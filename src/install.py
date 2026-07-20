@@ -42,8 +42,8 @@ def install() -> None:
             "": _make_command("convert"),
         })
 
-    # 이미지+PDF 확장자별 merge 등록
-    for ext in (".jpg", ".jpeg", ".png", ".bmp", ".pdf"):
+    # 이미지+PDF+HWP 확장자별 merge 등록 (HWP는 한컴오피스 설치 시 동작)
+    for ext in (".jpg", ".jpeg", ".png", ".bmp", ".pdf", ".hwp", ".hwpx"):
         shell_key = rf"Software\Classes\SystemFileAssociations\{ext}\shell\pdf_maker_merge"
         cmd_key = shell_key + r"\command"
 
@@ -86,7 +86,7 @@ def uninstall() -> None:
             rf"Software\Classes\SystemFileAssociations\{ext}\shell\pdf_maker_convert",
         )
 
-    for ext in (".jpg", ".jpeg", ".png", ".bmp", ".pdf"):
+    for ext in (".jpg", ".jpeg", ".png", ".bmp", ".pdf", ".hwp", ".hwpx"):
         _delete_key_tree(
             hkcu,
             rf"Software\Classes\SystemFileAssociations\{ext}\shell\pdf_maker_merge",

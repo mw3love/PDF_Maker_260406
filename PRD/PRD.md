@@ -85,7 +85,8 @@ Adaptive wait: 새 파일이 감지될 때마다 deadline을 600ms 연장 (Explo
 
 ## 지원 형식 및 출력 규칙
 
-- **입력**: `.jpg`, `.jpeg`, `.png`, `.bmp`, `.pdf`
+- **입력**: `.jpg`, `.jpeg`, `.png`, `.bmp`, `.pdf` — 그리고 **병합(merge) 한정** `.hwp`, `.hwpx`
+- **HWP → PDF**: 한컴오피스 COM(`HWPFrame.HwpObject`) `SaveAs(..., "PDF")`로 변환. **한컴오피스 설치 PC 전용** — 미설치/pywin32 미설치 시 해당 파일만 건너뛰고(errors) 나머지는 병합 진행. convert(무음성 일괄 변환) 모드에는 미지원(승인창이 매번 떠 UX 저해).
 - **비지원 형식**: 무시 (지원 파일만 처리). 지원 파일이 0개면 오류 팝업 후 종료.
 - **출력 위치**: 첫 번째 파일과 같은 폴더 (GUI에서 추가한 파일에도 고정)
 - **출력 파일명**: `merged.pdf` → 충돌 시 `merged_1.pdf`, `merged_2.pdf`...
@@ -98,6 +99,7 @@ Adaptive wait: 새 파일이 감지될 때마다 deadline을 600ms 연장 (Explo
 ## 단일 파일 예외 처리
 `merge` 모드에서 파일 1개만 선택 시:
 - 이미지 → PDF 변환 (GUI 없이 바로)
+- HWP/HWPX → PDF 변환 (GUI 없이 바로, 한컴 COM)
 - PDF → `merged.pdf`로 복사 (GUI 없이 바로)
 
 ---
@@ -229,9 +231,13 @@ HKCU\Software\Classes\*\shell\pdf_maker_merge\
 ## 빌드
 
 ```bat
-pip install PyMuPDF pyinstaller
-pyinstaller --onefile --windowed --name pdf_maker src/main.py
+pip install PyMuPDF pywin32 pyinstaller
+pyinstaller --onefile --windowed --name pdf_maker ^
+  --hidden-import win32com --hidden-import win32com.client ^
+  --hidden-import pythoncom --hidden-import pywintypes ^
+  src/main.py
 ```
+※ `pywin32`는 HWP→PDF 변환(한컴 COM)용. PyInstaller가 win32com을 누락하지 않도록 hidden-import 지정.
 
 ### 사용자 설치 과정
 1. `pdf_maker.exe` 원하는 폴더에 저장
@@ -253,3 +259,5 @@ pyinstaller --onefile --windowed --name pdf_maker src/main.py
 | 빈 파일명 입력란 | 포커스 이탈 시 `merged.pdf` 자동 복원 |
 | 중복 파일 | 허용 (중복 페이지 생성) |
 | 취소 후 부분 파일 | 자동 삭제 |
+| HWP인데 한컴 미설치 | 해당 파일만 스킵(errors), 나머지 병합 진행 |
+| HWP 변환 임시 PDF | 병합 후 `finally`에서 정리 (TEMP/`pdfmaker_hwp_*.pdf`) |
