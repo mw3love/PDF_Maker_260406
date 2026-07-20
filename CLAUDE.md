@@ -62,18 +62,23 @@ python src/main.py uninstall             # 레지스트리 삭제
 
 `MultiSelectModel = Player` 때문에 파일 n개 선택 시 exe가 n번 동시 호출됨. Lock 파일로 마스터 프로세스 1개를 선출하는 패턴:
 
-1. `TEMP/pdf_maker_{mode}_session.txt`에 파일경로 원자적 append
-2. `TEMP/pdf_maker_{mode}_lock.txt` 없으면 → lock 생성(마스터) → adaptive wait → session.txt 읽기 → lock/session 삭제 → 작업 실행
+1. 각 프로세스가 **자기 엔트리 파일** `TEMP/pdf_maker_{mode}_session/{pid}_{ns}.txt`에 경로를 1회 write
+2. `TEMP/pdf_maker_{mode}_lock.txt` 없으면 → lock 생성(마스터) → adaptive wait → 엔트리들 수집 → 엔트리/lock 삭제 → 작업 실행
 3. lock 있으면 → 조용히 종료
-4. lock 파일 생성 후 **15초** 초과 시 스테일 처리 (이전 크래시 대비)
+4. lock 파일 생성 후 **15초** 초과 시 스테일 처리 (이전 크래시 대비). 엔트리는 30초 초과 시 이전 크래시 잔재로 무시·청소.
 
-**Adaptive wait**: 새 파일이 session.txt에 기록될 때마다 deadline 600ms 연장. Explorer가 순차적으로 exe를 실행할 때 모든 파일이 수집될 때까지 대기.
+⚠ **공유 session.txt에 동시 append 금지** — Windows에서 프로세스 간 append는 원자적이지 않아, onedir로 startup이 빨라지자 N개 동시 쓰기가 겹쳐 줄 유실/뒤섞임 발생(개수 부족·깨진 경로 에러). 그래서 **프로세스마다 별도 파일**에 쓰고 마스터가 디렉터리를 glob해 수집한다(경쟁 원천 제거). 15프로세스×10회 동시성 테스트 통과.
+
+**Adaptive wait**: 새 엔트리가 감지될 때마다 deadline 600ms 연장. Explorer가 순차적으로 exe를 실행할 때 모든 파일이 수집될 때까지 대기.
 
 마스터 선출 직후 **"파일 수집 중..." 인디케이터 팝업** 표시 (`_run_with_indicator`).
 
+**⚡ 시작 반응성**: `main.py`는 최상단에서 `converter`(무거운 fitz)를 import하지 않는다. 슬레이브는 _try_master 후 즉시 종료(fitz 로드 안 함), 마스터는 인디케이터 창을 먼저 띄운 *뒤* fitz를 로드한다 → 클릭 즉시 "실행 중" 피드백.
+
 코드 구조 (`main.py`):
-- `_try_master(mode, file_path)` → session 기록 + lock 선점, bool 반환
-- `_collect_master(mode)` → adaptive wait 후 경로 목록 반환
+- `_session_dir(mode)` → 엔트리 파일 디렉터리 경로
+- `_try_master(mode, file_path)` → 엔트리 파일 기록 + lock 선점, bool 반환
+- `_collect_master(mode)` → adaptive wait 후 엔트리 수집·정리, 경로 목록 반환
 - `_run_with_indicator(mode, root, label)` → 백그라운드 collect + 인디케이터 UI
 
 **convert 모드**: 마스터가 수집된 파일 일괄 변환 → 통합 완료 팝업 1개  
@@ -85,7 +90,7 @@ python src/main.py uninstall             # 레지스트리 삭제
 import fitz  # PyMuPDF — 이미지/PDF 모두 fitz.open() 단일 처리
 
 SUPPORTED_IMG = {".jpg", ".jpeg", ".png", ".bmp"}
-SUPPORTED_HWP = {".hwp", ".hwpx"}  # 한컴 COM 필요 (merge 경로 한정)
+SUPPORTED_HWP = {".hwp", ".hwpx"}  # 한컴 COM 필요 (convert·merge 양쪽)
 SUPPORTED_ALL = SUPPORTED_IMG | {".pdf"} | SUPPORTED_HWP  # gui.py도 여기서 import
 
 def image_to_pdf(img_path: Path) -> Path:
@@ -133,7 +138,12 @@ def merge_files(file_paths, output_path, progress_cb=None, cancel_flag=None):
 - `hwp_batch_to_pdf(paths, cb)` → **convert 모드**: 각 HWP를 원본 옆 `.pdf`(충돌 시 `_N`)로 개별 변환.
 - `hwp_to_pdf(path)` → 단일 변환 (main.py 단일파일 merge 경로용).
 - `merge_files`: 루프 진입 전 HWP를 TEMP에 임시 PDF 일괄 변환(`pdfmaker_hwp_*.pdf`) → 루프에서 `insert_pdf` → `finally`에서 임시 PDF 정리.
-- COM 주의: merge/convert는 워커 스레드에서 도므로 `pythoncom.CoInitialize()`/`CoUninitialize()` 짝 필수. `hwp.Open(path,"","")` 3인자, `hwp.SaveAs(pdf,"PDF","")`, `hwp.Clear(1)`로 문서 닫기. `RegisterModule`로 보안 승인창 억제(미등록 시 창 뜰 수 있음). **취소(cancel_flag)는 HWP 세션 중간엔 안 먹음**(세션 단위).
+- COM 주의: merge/convert는 워커 스레드에서 도므로 `pythoncom.CoInitialize()`/`CoUninitialize()` 짝 필수. **취소(cancel_flag)는 HWP 세션 중간엔 안 먹음**(세션 단위).
+- **팝업 3종 억제** (모두 우리 자동화 인스턴스 한정 — 사용자의 일반 한글엔 영향 없음):
+  1. 보안 '모두 허용' → `RegisterModule("FilePathCheckDLL", "FilePathCheckerModule")` (1st=모듈유형, 2nd=레지스트리 `HKCU\Software\HNC\HwpAutomation\Modules`에 등록된 DLL ID). **그 레지스트리 값이 있어야 효과** → PC당 1회 `pyhwpx`의 `setup_pc.py` 실행 필요.
+  2. '상위 버전에서 작성한 문서' → `Open(path, "", "versionwarning:False;suspendpassword:True")` (3번째 인자, inflearn 검증).
+  3. 확인만 있는 기타 정보성 팝업 → `SetMessageBoxMode(0x1)` (OK-only 자동확인. ⚠ `0xFFFFFF`는 '자동설정 해제'라 반대 효과).
+- `hwp.SaveAs(pdf,"PDF","")`, `hwp.Clear(1)`로 문서 닫기.
 - **실조건검증(2026-07-20)**: `SaveAs("PDF")` 정상 + `[.hwp+.pdf+.png]` 병합 5쪽 통과 + `3×.hwp` 개별 변환 각각 통과(쪽수·순서 보존, errors 없음). HAction `FileSaveAsPdf`도 동일 결과(폴백 후보). **`.hwpx`만 미검증**(로직은 `.hwp`와 동일 경로).
 
 ## Output Rules

@@ -9,22 +9,32 @@ import time
 from pathlib import Path
 from typing import List, Optional
 
-from converter import SUPPORTED_IMG, SUPPORTED_HWP
+# 주의: converter는 fitz(무거움, ~0.6s)를 import하므로 모듈 최상단에서 불러오지 않는다.
+# 슬레이브 프로세스는 _try_master 후 즉시 종료하고, 마스터는 인디케이터 창을 먼저
+# 띄운 뒤 converter를 로드한다 (체감 반응성 + 슬레이브 startup 단축).
 
 
 # ---------------------------------------------------------------------------
 # 세션 수집기 (2단계)
 # ---------------------------------------------------------------------------
 
+def _session_dir(mode: str) -> Path:
+    return Path(tempfile.gettempdir()) / f"pdf_maker_{mode}_session"
+
+
 def _try_master(mode: str, file_path: str) -> bool:
-    """session.txt에 경로 기록 후 lock 선점 시 True, 슬레이브면 False."""
-    tmp = Path(tempfile.gettempdir())
-    session_file = tmp / f"pdf_maker_{mode}_session.txt"
-    lock_file = tmp / f"pdf_maker_{mode}_lock.txt"
+    """각 프로세스가 자기 엔트리 파일에 경로 기록 후 lock 선점 시 True, 슬레이브면 False.
+
+    공유 session.txt에 동시 append하면 프로세스 간 경쟁으로 줄이 유실/뒤섞이므로
+    (Windows append는 프로세스 간 원자적이지 않음), 프로세스마다 별도 파일에 1회 write한다.
+    """
+    session_dir = _session_dir(mode)
+    lock_file = Path(tempfile.gettempdir()) / f"pdf_maker_{mode}_lock.txt"
 
     try:
-        with open(session_file, "a", encoding="utf-8") as f:
-            f.write(file_path + "\n")
+        session_dir.mkdir(exist_ok=True)
+        entry = session_dir / f"{os.getpid()}_{time.time_ns()}.txt"
+        entry.write_text(file_path + "\n", encoding="utf-8")  # 단일 원자적 write
     except Exception:
         pass
 
@@ -47,31 +57,53 @@ def _try_master(mode: str, file_path: str) -> bool:
 
 
 def _collect_master(mode: str) -> List[Path]:
-    """마스터로서 adaptive wait 후 수집된 경로 목록 반환, lock/session 정리."""
-    tmp = Path(tempfile.gettempdir())
-    session_file = tmp / f"pdf_maker_{mode}_session.txt"
-    lock_file = tmp / f"pdf_maker_{mode}_lock.txt"
+    """마스터로서 adaptive wait 후 엔트리 파일들을 수집해 경로 목록 반환, 정리."""
+    session_dir = _session_dir(mode)
+    lock_file = Path(tempfile.gettempdir()) / f"pdf_maker_{mode}_lock.txt"
 
-    # 새 파일 도착마다 deadline 600ms 연장 (Explorer 순차 실행 대응)
-    text = ""
-    deadline = time.time() + 0.6
-    prev_count = 0
-    while time.time() < deadline:
-        time.sleep(0.05)
+    def read_entries():
+        """(파일, 경로) 목록. 30초 넘은 엔트리는 이전 크래시 잔재로 무시."""
+        out = []
+        now = time.time()
         try:
-            text = session_file.read_text(encoding="utf-8")
-            count = sum(1 for l in text.splitlines() if l.strip())
-            if count > prev_count:
-                prev_count = count
-                deadline = time.time() + 0.6
+            for f in session_dir.glob("*.txt"):
+                try:
+                    if now - f.stat().st_mtime > 30:
+                        continue
+                    for line in f.read_text(encoding="utf-8").splitlines():
+                        if line.strip():
+                            out.append((f, line.strip()))
+                except Exception:
+                    pass
         except Exception:
             pass
+        return out
 
-    paths = [Path(l.strip()) for l in text.splitlines() if l.strip()]
+    # 새 엔트리 도착마다 deadline 600ms 연장 (Explorer 순차 실행 대응)
+    deadline = time.time() + 0.6
+    prev_count = 0
+    entries = []
+    while time.time() < deadline:
+        time.sleep(0.05)
+        entries = read_entries()
+        if len(entries) > prev_count:
+            prev_count = len(entries)
+            deadline = time.time() + 0.6
 
+    paths = [Path(p) for _, p in entries]
+
+    # 수집한 엔트리 + lock 정리, 오래된 잔재도 청소
     try:
+        for f, _ in entries:
+            f.unlink(missing_ok=True)
         lock_file.unlink(missing_ok=True)
-        session_file.unlink(missing_ok=True)
+        now = time.time()
+        for f in session_dir.glob("*.txt"):
+            try:
+                if now - f.stat().st_mtime > 30:
+                    f.unlink(missing_ok=True)
+            except Exception:
+                pass
     except Exception:
         pass
 
@@ -130,15 +162,17 @@ def cmd_convert(file_path: str):
     if not _try_master("convert", file_path):
         return
 
+    # 무거운 fitz 로드 전에 인디케이터 창부터 띄운다 (클릭 즉시 "실행 중" 피드백)
     import tkinter as tk
-    from tkinter import messagebox
-    from converter import CancelledError, image_to_pdf, hwp_batch_to_pdf
-    import gui
-
     root = tk.Tk()
     root.withdraw()
-
     paths = _run_with_indicator("convert", root, "파일 수집 중...")
+
+    # 창이 뜬 뒤 무거운 모듈 로드
+    from tkinter import messagebox
+    from converter import SUPPORTED_IMG, SUPPORTED_HWP, CancelledError, image_to_pdf, hwp_batch_to_pdf
+    import gui
+
     img_paths = [p for p in paths if p.suffix.lower() in SUPPORTED_IMG and p.exists()]
     hwp_paths = [p for p in paths if p.suffix.lower() in SUPPORTED_HWP and p.exists()]
 
@@ -196,15 +230,16 @@ def cmd_merge(file_path: str):
     if not _try_master("merge", file_path):
         return
 
+    # 무거운 fitz 로드 전에 인디케이터 창부터 띄운다 (클릭 즉시 "실행 중" 피드백)
     import tkinter as tk
-    from tkinter import messagebox
-    from converter import CancelledError, image_to_pdf, resolve_output_path
-    import gui
-
     root = tk.Tk()
     root.withdraw()
-
     paths = [p for p in _run_with_indicator("merge", root, "파일 수집 중...") if p.exists()]
+
+    # 창이 뜬 뒤 무거운 모듈 로드
+    from tkinter import messagebox
+    from converter import SUPPORTED_IMG, SUPPORTED_HWP, CancelledError, image_to_pdf, resolve_output_path
+    import gui
 
     if not paths:
         messagebox.showerror("오류", "처리할 파일이 없습니다.")

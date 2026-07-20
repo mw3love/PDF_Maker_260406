@@ -67,16 +67,21 @@ HKCU\Software\Classes\*\shell\pdf_maker_merge\
 
 ```
 각 프로세스:
-  1. TEMP/pdf_maker_{mode}_session.txt 에 파일경로 append (원자적)
+  1. TEMP/pdf_maker_{mode}_session/{pid}_{ns}.txt 에 경로 1회 write (프로세스별 파일)
   2. TEMP/pdf_maker_{mode}_lock.txt 없으면 → lock 생성 (마스터)
-       → adaptive wait → session.txt 읽기 → lock/session 삭제 → 작업 실행
+       → adaptive wait → 엔트리 디렉터리 수집 → 엔트리/lock 삭제 → 작업 실행
   3. lock 있으면 → 조용히 종료
 
-Adaptive wait: 새 파일이 감지될 때마다 deadline을 600ms 연장 (Explorer 순차 실행 대응)
-스테일 처리: lock 파일 생성 후 15초 초과 시 무효화 (이전 크래시 대비)
+Adaptive wait: 새 엔트리 감지 시 deadline을 600ms 연장 (Explorer 순차 실행 대응)
+스테일 처리: lock 15초 / 엔트리 30초 초과 시 무효화 (이전 크래시 대비)
 ```
 
+⚠ **프로세스별 파일 방식인 이유**: 공유 session.txt에 N개가 동시 append하면 Windows에서
+프로세스 간 append가 원자적이지 않아 줄 유실/뒤섞임 발생(개수 부족·에러). onedir로 startup이
+빨라지자 이 race가 드러나, 프로세스마다 별도 파일에 쓰고 마스터가 glob 수집하도록 변경.
+
 마스터 선출 직후 "파일 수집 중..." 인디케이터 팝업 표시 (indeterminate 진행바).
+→ 시작 반응성: main.py는 무거운 fitz를 인디케이터 창 표시 *뒤*에 로드(클릭 즉시 창).
 
 **convert 모드**: 마스터가 수집된 모든 파일 일괄 변환 → 통합 완료 팝업 1개
 **merge 모드**: 마스터가 병합 GUI 실행
@@ -234,12 +239,15 @@ HKCU\Software\Classes\*\shell\pdf_maker_merge\
 
 ```bat
 pip install PyMuPDF pywin32 pyinstaller
-pyinstaller --onefile --windowed --name pdf_maker ^
+pyinstaller --onedir --windowed --name pdf_maker ^
   --hidden-import win32com --hidden-import win32com.client ^
   --hidden-import pythoncom --hidden-import pywintypes ^
   src/main.py
 ```
 ※ `pywin32`는 HWP→PDF 변환(한컴 COM)용. PyInstaller가 win32com을 누락하지 않도록 hidden-import 지정.
+※ **`--onedir`** (이전 `--onefile`에서 변경): onefile은 매 실행마다 수백 MB를 압축해제해
+  시작이 느리고, 다중선택 시 N개가 동시에 해제돼 특히 지연. onedir은 압축해제가 없어 시작이
+  빠름. 배포는 `dist\pdf_maker` **폴더째** zip. 등록 exe = `dist\pdf_maker\pdf_maker.exe`.
 
 ### 사용자 설치 과정
 1. `pdf_maker.exe` 원하는 폴더에 저장
