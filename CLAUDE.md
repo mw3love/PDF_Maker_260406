@@ -140,7 +140,7 @@ def merge_files(file_paths, output_path, progress_cb=None, cancel_flag=None):
 - `merge_files`: 루프 진입 전 HWP를 TEMP에 임시 PDF 일괄 변환(`pdfmaker_hwp_*.pdf`) → 루프에서 `insert_pdf` → `finally`에서 임시 PDF 정리.
 - COM 주의: merge/convert는 워커 스레드에서 도므로 `pythoncom.CoInitialize()`/`CoUninitialize()` 짝 필수. **취소(cancel_flag)는 HWP 세션 중간엔 안 먹음**(세션 단위).
 - **팝업 3종 억제** (모두 우리 자동화 인스턴스 한정 — 사용자의 일반 한글엔 영향 없음):
-  1. 보안 '모두 허용' → `RegisterModule("FilePathCheckDLL", "FilePathCheckerModule")` (1st=모듈유형, 2nd=레지스트리 `HKCU\Software\HNC\HwpAutomation\Modules`에 등록된 DLL ID). **그 레지스트리 값이 있어야 효과** → PC당 1회 `pyhwpx`의 `setup_pc.py` 실행 필요.
+  1. 보안 '모두 허용' → `RegisterModule("FilePathCheckDLL", "FilePathCheckerModule")` (1st=모듈유형, 2nd=레지스트리 `HKCU\Software\HNC\HwpAutomation\Modules`에 등록된 DLL ID). **그 레지스트리 값이 있어야 효과** → `install.py`가 **번들된 `FilePathCheckerModule.dll`(217KB, `src/`에 포함, 빌드 시 `_internal`)을 [메뉴 등록] 시 자동 등록**(`_register_security_module`). 파이썬/pyhwpx 불필요.
   2. '상위 버전에서 작성한 문서' → `Open(path, "", "versionwarning:False;suspendpassword:True")` (3번째 인자, inflearn 검증).
   3. 확인만 있는 기타 정보성 팝업 → `SetMessageBoxMode(0x1)` (OK-only 자동확인. ⚠ `0xFFFFFF`는 '자동설정 해제'라 반대 효과).
 - `hwp.SaveAs(pdf,"PDF","")`, `hwp.Clear(1)`로 문서 닫기.
@@ -186,3 +186,5 @@ HKCU\Software\Classes\SystemFileAssociations\.{jpg,jpeg,png,bmp,pdf,hwp,hwpx}\sh
 ```
 
 PyInstaller frozen 환경에서 exe 경로는 `sys.executable`로 자동 감지. 개발 모드에서는 `pythonw.exe` 우선 사용(콘솔 창 방지). 이미 등록된 경우 조용히 덮어쓰기.
+
+`install()`은 우클릭 메뉴 등록 후 `_register_security_module()`도 호출 → 번들 DLL 경로를 `HKCU\Software\HNC\HwpAutomation\Modules\FilePathCheckerModule`에 기록해 '모두 허용' 팝업을 억제한다(DLL은 frozen이면 `sys._MEIPASS`(_internal), dev면 `src/`에서 탐색; 없으면 조용히 스킵). uninstall은 이 값을 지우지 않는다(다른 한글 자동화 도구가 같은 표준 값명을 쓸 수 있어, 삭제 위험 > 잔재 무해).

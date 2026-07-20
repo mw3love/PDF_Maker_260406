@@ -3,6 +3,37 @@ install.py — Windows 레지스트리 우클릭 메뉴 등록/해제 (HKCU, 관
 """
 import sys
 import winreg
+from pathlib import Path
+
+
+def _module_dll_path() -> Path:
+    """번들된 한글 보안모듈 DLL 경로. frozen(onedir)이면 _internal, dev면 이 파일 옆."""
+    if getattr(sys, "frozen", False):
+        base = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+    else:
+        base = Path(__file__).parent
+    return base / "FilePathCheckerModule.dll"
+
+
+def _register_security_module() -> bool:
+    """한글 보안모듈을 HKCU에 등록 → HWP 변환 시 '모두 허용' 팝업 억제.
+
+    converter.py의 RegisterModule("FilePathCheckDLL", "FilePathCheckerModule")이
+    참조하는 레지스트리 값(HKCU\\Software\\HNC\\HwpAutomation\\Modules\\FilePathCheckerModule)
+    을 번들 DLL 경로로 기록한다. DLL이 없으면 조용히 스킵(HWP 억제만 안 될 뿐 나머지는 정상).
+    파이썬/pyhwpx 없이 exe만으로 PC당 1회 [메뉴 등록] 시 자동 처리하기 위함.
+    """
+    dll = _module_dll_path()
+    if not dll.exists():
+        return False
+    try:
+        with winreg.CreateKey(
+            winreg.HKEY_CURRENT_USER, r"Software\HNC\HwpAutomation\Modules"
+        ) as key:
+            winreg.SetValueEx(key, "FilePathCheckerModule", 0, winreg.REG_SZ, str(dll))
+        return True
+    except OSError:
+        return False
 
 
 def _make_command(subcommand: str) -> str:
@@ -67,6 +98,9 @@ def install() -> None:
         _set_key(hkcu, cmd_key, {
             "": _make_command("merge"),
         })
+
+    # HWP 보안모듈 자동 등록 (번들 DLL) → '모두 허용' 팝업 억제. 파이썬 불필요.
+    _register_security_module()
 
 
 def _delete_key_tree(base: int, key_path: str) -> None:

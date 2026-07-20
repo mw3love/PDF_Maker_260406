@@ -242,17 +242,21 @@ pip install PyMuPDF pywin32 pyinstaller
 pyinstaller --onedir --windowed --name pdf_maker ^
   --hidden-import win32com --hidden-import win32com.client ^
   --hidden-import pythoncom --hidden-import pywintypes ^
+  --add-data "src/FilePathCheckerModule.dll;." ^
   src/main.py
 ```
 ※ `pywin32`는 HWP→PDF 변환(한컴 COM)용. PyInstaller가 win32com을 누락하지 않도록 hidden-import 지정.
 ※ **`--onedir`** (이전 `--onefile`에서 변경): onefile은 매 실행마다 수백 MB를 압축해제해
   시작이 느리고, 다중선택 시 N개가 동시에 해제돼 특히 지연. onedir은 압축해제가 없어 시작이
   빠름. 배포는 `dist\pdf_maker` **폴더째** zip. 등록 exe = `dist\pdf_maker\pdf_maker.exe`.
+※ **`--add-data`**: 한글 보안모듈 `FilePathCheckerModule.dll`(217KB, `src/`)을 번들 →
+  [메뉴 등록] 시 자동 레지스트리 등록으로 '모두 허용' 팝업 억제. **대상 PC에 파이썬 불필요.**
 
-### 사용자 설치 과정
-1. `pdf_maker.exe` 원하는 폴더에 저장
-2. 더블클릭 → 도우미 GUI → [메뉴 등록]
+### 사용자 설치 과정 (배포받는 사람)
+1. `dist\pdf_maker` **폴더 전체**를 zip으로 받아 원하는 위치에 압축 해제 (exe만 떼면 실행 불가)
+2. 폴더 안 `pdf_maker.exe` 더블클릭 → 도우미 GUI → **[메뉴 등록]** (우클릭 메뉴 + 보안모듈 자동 등록)
 3. 탐색기 우클릭에서 즉시 사용 가능
+4. HWP 기능은 그 PC에 한글(한컴오피스) 설치 시에만 동작 (없으면 이미지/PDF만, HWP는 스킵)
 
 ---
 
