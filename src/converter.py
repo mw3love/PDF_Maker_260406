@@ -59,8 +59,17 @@ def _hwp_session_convert(
         try:
             hwp = win32com.client.Dispatch("HWPFrame.HwpObject")
             try:
-                # 보안 승인창 억제 (보안모듈 사전 등록 시 유효, 아니면 창이 뜰 수 있음)
-                hwp.RegisterModule("FilePathCheckerModule", "FilePathCheckerModuleExample")
+                # 보안 승인창('모두 허용') 억제.
+                # 1st="FilePathCheckDLL"(모듈 유형), 2nd="FilePathCheckerModule"(레지스트리
+                # HKCU\Software\HNC\HwpAutomation\Modules 에 등록된 DLL 모듈 ID).
+                # 그 레지스트리 값이 있어야만 효과 있음(pyhwpx setup_pc.py로 PC당 1회 등록).
+                hwp.RegisterModule("FilePathCheckDLL", "FilePathCheckerModule")
+            except Exception:
+                pass
+            try:
+                # 확인만 있는 정보성 팝업 자동 확인(예: '상위 버전에서 작성한 문서').
+                # 0x1 = OK-only 팝업에서 확인 자동클릭. (0xFFFFFF는 '자동설정 해제'이니 주의)
+                hwp.SetMessageBoxMode(0x1)
             except Exception:
                 pass
         except Exception:
@@ -70,7 +79,8 @@ def _hwp_session_convert(
         for i, (src, dst) in enumerate(jobs):
             try:
                 dst.unlink(missing_ok=True)
-                hwp.Open(str(src), "", "")             # 인자 3개 필수
+                # 3번째 인자: versionwarning=상위버전 경고 끄기, suspendpassword=암호문서 프롬프트 억제
+                hwp.Open(str(src), "", "versionwarning:False;suspendpassword:True")
                 hwp.SaveAs(str(dst), "PDF", "")
                 if not dst.exists():
                     raise RuntimeError("PDF 저장 실패 (SaveAs)")
