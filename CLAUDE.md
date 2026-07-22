@@ -134,7 +134,8 @@ def merge_files(file_paths, output_path, progress_cb=None, cancel_flag=None):
 
 `.hwp`/`.hwpx`는 fitz가 못 여므로 한컴오피스 COM으로 PDF 변환한다. **convert(각각 개별 PDF)·merge(1개로 병합) 모두 지원.**
 
-- `_hwp_session_convert(jobs, progress_cb)` → 코어. `jobs=[(src, dst)]`를 한컴 **1세션**으로 각각 `dst`에 SaveAs PDF (승인창 1회·성능). `(성공 dst 목록, [(src, 예외)])` 반환. pywin32/한컴 미설치·개별 실패는 예외로 잡아 스킵.
+- `_hwp_session_convert(jobs, progress_cb)` → 코어. `jobs=[(src, dst)]`를 한컴 **1세션**으로 각각 `dst`에 PDF 저장 (승인창 1회·성능). `(성공 dst 목록, [(src, 예외)])` 반환. pywin32/한컴 미설치·개별 실패는 예외로 잡아 스킵.
+- `_hwp_save_pdf(hwp, dst)` → 현재 문서를 PDF로 저장하는 헬퍼. **`SaveAs("PDF")` 금지** — 한컴에 저장된 인쇄 '모아 찍기' 설정(`PrintMethod=4`=2쪽)을 물려받아 **2-up 가로 PDF**로 나온다(원본 6쪽→가로 3장). 대신 `PrintToPDFEx` 액션 + `PrintMethod=0`(1쪽씩)으로 원본 쪽 구성 그대로 저장. 프린터 스풀은 비동기라 `_wait_for_file`로 파일 생성 대기. `Execute`가 실패(프린터 부재 등)하면 `SaveAs`로 폴백(2-up이라도 PDF는 생성).
 - `hwp_batch_to_pdf(paths, cb)` → **convert 모드**: 각 HWP를 원본 옆 `.pdf`(충돌 시 `_N`)로 개별 변환.
 - `hwp_to_pdf(path)` → 단일 변환 (main.py 단일파일 merge 경로용).
 - `merge_files`: 루프 진입 전 HWP를 TEMP에 임시 PDF 일괄 변환(`pdfmaker_hwp_*.pdf`) → 루프에서 `insert_pdf` → `finally`에서 임시 PDF 정리.
@@ -143,8 +144,9 @@ def merge_files(file_paths, output_path, progress_cb=None, cancel_flag=None):
   1. 보안 '모두 허용' → `RegisterModule("FilePathCheckDLL", "FilePathCheckerModule")` (1st=모듈유형, 2nd=레지스트리 `HKCU\Software\HNC\HwpAutomation\Modules`에 등록된 DLL ID). **그 레지스트리 값이 있어야 효과** → `install.py`가 **번들된 `FilePathCheckerModule.dll`(217KB, `src/`에 포함, 빌드 시 `_internal`)을 [메뉴 등록] 시 자동 등록**(`_register_security_module`). 파이썬/pyhwpx 불필요.
   2. '상위 버전에서 작성한 문서' → `Open(path, "", "versionwarning:False;suspendpassword:True")` (3번째 인자, inflearn 검증).
   3. 확인만 있는 기타 정보성 팝업 → `SetMessageBoxMode(0x1)` (OK-only 자동확인. ⚠ `0xFFFFFF`는 '자동설정 해제'라 반대 효과).
-- `hwp.SaveAs(pdf,"PDF","")`, `hwp.Clear(1)`로 문서 닫기.
-- **실조건검증(2026-07-20)**: `SaveAs("PDF")` 정상 + `[.hwp+.pdf+.png]` 병합 5쪽 통과 + `3×.hwp` 개별 변환 각각 통과(쪽수·순서 보존, errors 없음). HAction `FileSaveAsPdf`도 동일 결과(폴백 후보). **`.hwpx`만 미검증**(로직은 `.hwp`와 동일 경로).
+- PDF 저장은 `_hwp_save_pdf`(PrintToPDFEx), 문서 닫기는 `hwp.Clear(1)`.
+- **실조건검증(2026-07-20)**: `[.hwp+.pdf+.png]` 병합 5쪽 통과 + `3×.hwp` 개별 변환 각각 통과(쪽수·순서 보존, errors 없음). **`.hwpx`만 미검증**(로직은 `.hwp`와 동일 경로).
+- **2-up 모아찍기 수정(2026-07-22)**: `SaveAs("PDF")`가 `PrintMethod=4`를 물려받아 6쪽 원본이 가로 3장 2-up으로 나오던 버그를 `PrintToPDFEx`+`PrintMethod=0`으로 해결. 실조건검증: 실제 원본으로 `6쪽 / 595×841 세로 / errors 없음`, 1쪽=표지 단독 렌더 확인. 근거: 한컴 개발자 포럼 `forum.developer.hancom.com/t/saveas-pdf/1670`.
 
 ## Output Rules
 

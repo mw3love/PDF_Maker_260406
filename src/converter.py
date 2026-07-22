@@ -4,6 +4,7 @@ import os
 import shutil
 import tempfile
 import threading
+import time
 
 import fitz  # PyMuPDF
 
@@ -28,6 +29,54 @@ def resolve_output_path(path: Path) -> Path:
         if not candidate.exists():
             return candidate
         i += 1
+
+
+def _wait_for_file(dst: Path, timeout: float = 30.0) -> bool:
+    """비동기 프린터 스풀 대비: 파일이 생기고 크기가 안정될 때까지 대기."""
+    deadline = time.time() + timeout
+    last = -1
+    stable = 0
+    while time.time() < deadline:
+        if dst.exists():
+            size = dst.stat().st_size
+            if size > 0 and size == last:
+                stable += 1
+                if stable >= 2:  # 연속 2회 동일 크기 → 쓰기 완료로 간주
+                    return True
+            else:
+                stable = 0
+            last = size
+        time.sleep(0.3)
+    return dst.exists() and dst.stat().st_size > 0
+
+
+def _hwp_save_pdf(hwp, dst: Path) -> None:
+    """열려 있는 현재 한글 문서를 dst(PDF)로 저장. 모아찍기(2-up) 방지.
+
+    SaveAs(dst,"PDF","")는 한컴에 저장된 인쇄 '모아 찍기' 설정(PrintMethod=4=2쪽)을
+    그대로 물려받아 A4 가로 2-up PDF로 나오는 문제가 있다(원본 6쪽 → 가로 3장).
+    PrintToPDFEx 액션으로 PrintMethod=0(1쪽씩)을 명시해 원본 쪽 구성 그대로 저장한다.
+    (한컴 개발자 포럼 forum.developer.hancom.com/t/saveas-pdf/1670 + 실조건검증 2026-07-22)
+    Hancom PDF 프린터 경로가 실패하면 SaveAs로 폴백(2-up이라도 PDF는 생성).
+    """
+    dst.unlink(missing_ok=True)
+    try:
+        pset = hwp.HParameterSet.HPrint
+        hwp.HAction.GetDefault("PrintToPDFEx", pset.HSet)
+        pset.PrinterName = "Hancom PDF"
+        pset.FileName = str(dst)
+        pset.PrintMethod = 0   # 0=자동 인쇄(1쪽씩) / 4=2쪽 모아찍기
+        pset.PrintToFile = 1
+        # Execute가 True(액션 성공)이고 스풀 파일이 생기면 완료. 프린터 스풀은 비동기.
+        if hwp.HAction.Execute("PrintToPDFEx", pset.HSet) and _wait_for_file(dst):
+            return
+    except Exception:
+        pass
+    # 폴백: PrintToPDFEx 실패(프린터 부재 등) → SaveAs (모아찍기 설정 물려받을 수 있음)
+    dst.unlink(missing_ok=True)  # 스풀 잔여 파일 제거(이중쓰기 방지)
+    hwp.SaveAs(str(dst), "PDF", "")
+    if not dst.exists():
+        raise RuntimeError("PDF 저장 실패 (PrintToPDFEx·SaveAs 모두 실패)")
 
 
 def _hwp_session_convert(
@@ -78,12 +127,9 @@ def _hwp_session_convert(
 
         for i, (src, dst) in enumerate(jobs):
             try:
-                dst.unlink(missing_ok=True)
                 # 3번째 인자: versionwarning=상위버전 경고 끄기, suspendpassword=암호문서 프롬프트 억제
                 hwp.Open(str(src), "", "versionwarning:False;suspendpassword:True")
-                hwp.SaveAs(str(dst), "PDF", "")
-                if not dst.exists():
-                    raise RuntimeError("PDF 저장 실패 (SaveAs)")
+                _hwp_save_pdf(hwp, dst)  # 모아찍기(2-up) 방지 — PrintToPDFEx PrintMethod=0
                 done.append(dst)
                 try:
                     hwp.Clear(1)  # 현재 문서 닫기(변경 무시)

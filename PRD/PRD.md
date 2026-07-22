@@ -91,7 +91,7 @@ Adaptive wait: 새 엔트리 감지 시 deadline을 600ms 연장 (Explorer 순�
 ## 지원 형식 및 출력 규칙
 
 - **입력**: `.jpg`, `.jpeg`, `.png`, `.bmp`, `.pdf`, `.hwp`, `.hwpx`
-- **HWP → PDF**: 한컴오피스 COM(`HWPFrame.HwpObject`) `SaveAs(..., "PDF")`로 변환. **한컴오피스 설치 PC 전용** — 미설치/pywin32 미설치 시 해당 파일만 건너뛰고(errors) 나머지는 계속.
+- **HWP → PDF**: 한컴오피스 COM(`HWPFrame.HwpObject`) `PrintToPDFEx`(PrintMethod=0, 1쪽씩)로 변환. `SaveAs("PDF")`는 한컴 인쇄 '모아 찍기' 설정(2쪽)을 물려받아 2-up 가로 PDF가 나오므로 쓰지 않는다(프린터 부재 시에만 폴백). **한컴오피스 설치 PC 전용** — 미설치/pywin32 미설치 시 해당 파일만 건너뛰고(errors) 나머지는 계속.
   - **convert 모드**: 여러 HWP를 **각각 개별 PDF**로 일괄 변환 (원본 옆 `.pdf`). 우클릭 메뉴 라벨 "HWP → PDF 변환". 보안모듈 등록 PC에서는 승인창 없이 무음성 동작.
   - **merge 모드**: HWP를 임시 PDF로 변환 후 다른 파일과 **1개로 병합**.
 - **비지원 형식**: 무시 (지원 파일만 처리). 지원 파일이 0개면 오류 팝업 후 종료.

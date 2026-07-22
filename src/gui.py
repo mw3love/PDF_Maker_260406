@@ -560,7 +560,10 @@ def _center(win: tk.Misc, parent: Optional[tk.Misc]):
 def _open_folder(path: Path):
     """탐색기에서 해당 파일이 선택된 채로 폴더 열기."""
     try:
-        subprocess.run(["explorer", f"/select,{path}"])  # explorer는 성공해도 비0 반환 → 체크 안 함
+        # 리스트 인자로 "/select,<경로>"를 넘기면 경로에 공백이 있을 때 subprocess가
+        # "/select,경로" 전체를 한 토큰으로 따옴표 감싸(explorer가 파싱 못 함) 기본 폴더(문서)를
+        # 열어버린다. → 단일 문자열로 경로만 따옴표 감싼 /select,"경로" 형태를 직접 넘긴다.
+        subprocess.run(f'explorer /select,"{os.path.normpath(path)}"')  # explorer는 성공해도 비0 반환
     except Exception:
         pass
 
