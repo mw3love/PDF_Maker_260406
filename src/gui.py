@@ -1,4 +1,6 @@
+import os
 import queue
+import subprocess
 import threading
 import tkinter as tk
 from pathlib import Path
@@ -478,7 +480,7 @@ class HelperWindow:
                 if conv_errors:
                     fails = "\n".join(f"- {p.name}: {e}" for p, e in conv_errors)
                     msg += f"\n\n실패 {len(conv_errors)}건:\n{fails}"
-                messagebox.showinfo("변환 완료", msg)
+                show_result_popup(self._root, "변환 완료", msg, results)
             elif status == "error":
                 messagebox.showerror("오류", str(data))
 
@@ -519,12 +521,16 @@ def _run_merge_popup(parent: tk.Misc, paths: List[Path], filename: str, on_done_
             errors = data
             if errors:
                 failed = "\n".join(str(p) for p, _ in errors)
-                messagebox.showwarning(
-                    "병합 완료 (일부 실패)",
+                show_result_popup(
+                    parent, "병합 완료 (일부 실패)",
                     f"{output_path.name} 생성 완료\n{output_path}\n\n실패 파일:\n{failed}",
+                    [output_path],
                 )
             else:
-                messagebox.showinfo("병합 완료", f"{output_path.name} 생성 완료\n{output_path}")
+                show_result_popup(
+                    parent, "병합 완료",
+                    f"{output_path.name} 생성 완료\n{output_path}", [output_path],
+                )
         elif status == "error":
             messagebox.showerror("오류", str(data))
         if on_done_extra:
@@ -545,3 +551,65 @@ def _center(win: tk.Misc, parent: Optional[tk.Misc]):
         py = win.winfo_screenheight() // 2
     win.geometry(f"{w}x{h}+{px - w // 2}+{py - h // 2}")
     win.deiconify()
+
+
+# ---------------------------------------------------------------------------
+# 완료 팝업 (폴더 열기 / PDF 열기 버튼)
+# ---------------------------------------------------------------------------
+
+def _open_folder(path: Path):
+    """탐색기에서 해당 파일이 선택된 채로 폴더 열기."""
+    try:
+        subprocess.run(["explorer", f"/select,{path}"])  # explorer는 성공해도 비0 반환 → 체크 안 함
+    except Exception:
+        pass
+
+
+def _open_pdfs(paths: List[Path]):
+    """각 PDF를 기본 뷰어로 연다 (개수 제한 없음 — 탭형 뷰어면 탭으로 열림)."""
+    for p in paths:
+        try:
+            os.startfile(str(p))  # type: ignore[attr-defined]  (Windows 전용)
+        except Exception:
+            pass
+
+
+def show_result_popup(parent: tk.Misc, title: str, message: str, outputs: List[Path]):
+    """완료 팝업: 메시지 + [폴더 열기]·[PDF 열기](outputs 있을 때만)·[닫기].
+
+    outputs: 결과 PDF 경로 목록. 실제 존재하는 것만 열기 대상.
+    modal(wait_window) — 호출측이 이후 root.destroy() 해도 사용자가 버튼을 누를 시간이 보장됨.
+    """
+    openable = [p for p in outputs if p.exists()]
+
+    win = tk.Toplevel(parent)
+    win.title(title)
+    win.resizable(False, False)
+    win.attributes("-topmost", True)
+
+    tk.Label(win, text=message, justify="left").pack(padx=24, pady=(18, 12))
+
+    btn_row = tk.Frame(win)
+    btn_row.pack(pady=(0, 16))
+
+    def _close():
+        win.destroy()
+
+    if openable:
+        tk.Button(btn_row, text="폴더 열기", width=10,
+                  command=lambda: _open_folder(openable[0])).pack(side="left", padx=4)
+        tk.Button(btn_row, text="PDF 열기", width=10,
+                  command=lambda: _open_pdfs(openable)).pack(side="left", padx=4)
+    tk.Button(btn_row, text="닫기", width=10, command=_close).pack(side="left", padx=4)
+
+    win.bind("<Return>", lambda _e: _open_pdfs(openable) if openable else _close())
+    win.bind("<Escape>", lambda _e: _close())
+
+    _center(win, parent)
+    win.focus_force()
+    try:
+        win.wait_visibility()  # 매핑 완료 후 grab (부모가 withdraw 상태여도 안전)
+        win.grab_set()
+    except tk.TclError:
+        pass
+    win.wait_window()

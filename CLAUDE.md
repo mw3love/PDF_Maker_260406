@@ -165,6 +165,7 @@ def merge_files(file_paths, output_path, progress_cb=None, cancel_flag=None):
 - `_FileListFrame._refresh_display()`: 파일 추가/제거/이동 후 Listbox 전체 갱신 (번호 재정렬 + 선택 복원)
 - `MergeWindow`: 초기화 시 topmost+focus_force → 200ms 후 topmost 해제 (포커스 보장)
 - `_center()`: withdraw/deiconify 패턴으로 창 위치 설정 시 깜빡임 제거
+- `show_result_popup(parent, title, message, outputs)`: 변환/병합 **완료 팝업**(기존 `messagebox.showinfo` 대체). 버튼 `[폴더 열기]`(`explorer /select,<첫 파일>`)·`[PDF 열기]`(`os.startfile`로 outputs 전부 열기 — 개수 제한 없음)·`[닫기]`. `outputs` 중 **실제 존재하는 것만** 열기 대상이고, 하나도 없으면 열기 버튼 숨김. `Enter`=PDF 열기 / `ESC`=닫기. `wait_visibility()`→`grab_set()`→`wait_window()`로 모달(호출측이 이후 `root.destroy()` 해도 클릭 시간 보장). convert 일괄·merge 병합·단일파일 즉시처리 4곳 모두 이 팝업 사용.
 
 ## Registry Keys (install.py)
 

@@ -213,7 +213,7 @@ def cmd_convert(file_path: str):
             if conv_errors:
                 fails = "\n".join(f"- {p.name}: {e}" for p, e in conv_errors)
                 msg += f"\n\n실패 {len(conv_errors)}건:\n{fails}"
-            messagebox.showinfo("변환 완료", msg)
+            gui.show_result_popup(root, "변환 완료", msg, results)
         elif status == "error":
             messagebox.showerror("오류", str(data))
         root.destroy()
@@ -252,15 +252,15 @@ def cmd_merge(file_path: str):
         try:
             if ext in SUPPORTED_IMG:
                 out = image_to_pdf(p)
-                messagebox.showinfo("변환 완료", f"{out.name} 생성 완료\n{out}")
+                gui.show_result_popup(root, "변환 완료", f"{out.name} 생성 완료\n{out}", [out])
             elif ext in SUPPORTED_HWP:
                 from converter import hwp_to_pdf
                 out = hwp_to_pdf(p)
-                messagebox.showinfo("변환 완료", f"{out.name} 생성 완료\n{out}")
+                gui.show_result_popup(root, "변환 완료", f"{out.name} 생성 완료\n{out}", [out])
             elif ext == ".pdf":
                 output_path = resolve_output_path(p.parent / "merged.pdf")
                 shutil.copy2(str(p), str(output_path))
-                messagebox.showinfo("완료", f"{output_path.name} 생성 완료\n{output_path}")
+                gui.show_result_popup(root, "완료", f"{output_path.name} 생성 완료\n{output_path}", [output_path])
             else:
                 messagebox.showerror("오류", f"지원하지 않는 파일 형식: {p.suffix}")
         except Exception as exc:
