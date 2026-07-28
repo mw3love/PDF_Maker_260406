@@ -598,14 +598,22 @@ def show_result_popup(parent: tk.Misc, title: str, message: str, outputs: List[P
     def _close():
         win.destroy()
 
+    def _open_folder_and_close():
+        _open_folder(openable[0])
+        _close()
+
+    def _open_pdfs_and_close():
+        _open_pdfs(openable)
+        _close()
+
     if openable:
         tk.Button(btn_row, text="폴더 열기", width=10,
-                  command=lambda: _open_folder(openable[0])).pack(side="left", padx=4)
+                  command=_open_folder_and_close).pack(side="left", padx=4)
         tk.Button(btn_row, text="PDF 열기", width=10,
-                  command=lambda: _open_pdfs(openable)).pack(side="left", padx=4)
+                  command=_open_pdfs_and_close).pack(side="left", padx=4)
     tk.Button(btn_row, text="닫기", width=10, command=_close).pack(side="left", padx=4)
 
-    win.bind("<Return>", lambda _e: _open_pdfs(openable) if openable else _close())
+    win.bind("<Return>", lambda _e: _open_pdfs_and_close() if openable else _close())
     win.bind("<Escape>", lambda _e: _close())
 
     _center(win, parent)
