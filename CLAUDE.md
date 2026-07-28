@@ -97,9 +97,12 @@ def image_to_pdf(img_path: Path) -> Path:
     doc = fitz.open()
     img_doc = fitz.open(str(img_path))
     rect = img_doc[0].rect
-    page = doc.new_page(width=rect.width, height=rect.height)
-    page.insert_image(page.rect, stream=img_doc.tobytes())  # 이미지 원본 스트림 삽입
     img_doc.close()
+    page = doc.new_page(width=rect.width, height=rect.height)
+    # img_doc.tobytes()(Document.write, PDF 직렬화 전용)를 이미지 문서에 쓰면
+    # PyMuPDF 1.27+에서 _as_pdf_document assert 실패로 매번 크래시(2026-07-28 발견).
+    # insert_image(stream=...)는 원본 인코딩 바이트가 필요하므로 파일을 직접 읽는다.
+    page.insert_image(page.rect, stream=img_path.read_bytes())
     output = resolve_output_path(img_path.with_suffix(".pdf"))
     doc.save(str(output))
     doc.close()
