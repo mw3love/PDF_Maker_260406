@@ -494,6 +494,7 @@ class HelperWindow:
                 show_result_popup(
                     self._root, "변환 완료", msg, results,
                     auto_open_folder=self._open_folder_var.get(), show_folder_button=False,
+                    show_popup=bool(conv_errors),
                 )
             elif status == "error":
                 messagebox.showerror("오류", str(data))
@@ -554,6 +555,7 @@ def _run_merge_popup(parent: tk.Misc, paths: List[Path], filename: str, on_done_
                     parent, "병합 완료",
                     f"{output_path.name} 생성 완료\n{output_path}", [output_path],
                     auto_open_folder=open_folder_default, show_folder_button=False,
+                    show_popup=False,
                 )
         elif status == "error":
             messagebox.showerror("오류", str(data))
@@ -604,19 +606,26 @@ def _open_pdfs(paths: List[Path]):
 def show_result_popup(
     parent: tk.Misc, title: str, message: str, outputs: List[Path],
     auto_open_folder: bool = False, show_folder_button: bool = True,
+    show_popup: bool = True,
 ):
-    """완료 팝업: 메시지 + (설정에 따라) [폴더 열기]. PDF는 항상 자동으로 연다.
+    """완료 처리: PDF는 항상 자동으로 열고, show_popup이 True일 때만 알림 창을 띄운다.
 
     outputs: 결과 PDF 경로 목록. 실제 존재하는 것만 열기 대상.
     auto_open_folder: True면 폴더도 자동으로 연다 (병합/도우미 창의 "완료 후 폴더 열기" 체크박스용).
     show_folder_button: False면 폴더 열기 버튼을 감춘다 (위 체크박스로 이미 결정된 경우).
         사전 설정 창이 없는 흐름(우클릭 단일파일 병합·우클릭 일괄변환)에서는 True 유지.
+    show_popup: False면 알림 창 자체를 띄우지 않는다(2026-08-03) — PDF 자동 열기가 이미
+        충분한 확인 수단이라 성공 시엔 팝업이 불필요하다는 판단. 호출측은 **에러/부분실패일 때만
+        True**로 넘겨 실패 파일 목록 등 팝업이 아니면 알 수 없는 정보만 여전히 표시한다.
     modal(wait_window) — 호출측이 이후 root.destroy() 해도 사용자가 버튼을 누를 시간이 보장됨.
     """
     openable = [p for p in outputs if p.exists()]
     _open_pdfs(openable)  # PDF는 항상 자동으로 연다 (버튼 클릭 불필요)
     if auto_open_folder and openable:
         _open_folder(openable[0])
+
+    if not show_popup:
+        return
 
     win = tk.Toplevel(parent)
     win.title(title)
