@@ -304,8 +304,13 @@ class MergeWindow:
             row=2, column=0, padx=12, sticky="w"
         )
 
+        self._open_folder_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            self._top, text="완료 후 폴더 열기", variable=self._open_folder_var,
+        ).grid(row=3, column=0, padx=12, pady=(2, 0), sticky="w")
+
         btn_frame = tk.Frame(self._top)
-        btn_frame.grid(row=3, column=0, pady=12, padx=12, sticky="e")
+        btn_frame.grid(row=4, column=0, pady=12, padx=12, sticky="e")
         tk.Button(btn_frame, text="취소", width=10, command=self._cancel).pack(side="left", padx=(0, 6))
         self._merge_btn = tk.Button(btn_frame, text="병합 시작", width=12, command=self._start_merge)
         self._merge_btn.pack(side="left")
@@ -330,6 +335,7 @@ class MergeWindow:
             paths,
             self._name_var.get(),
             on_done_extra=lambda status: self._cancel() if status == "done" else None,
+            open_folder_default=self._open_folder_var.get(),
         )
 
     def mainloop(self):
@@ -392,12 +398,17 @@ class HelperWindow:
             row=3, column=0, padx=12, sticky="w"
         )
 
+        self._open_folder_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            root, text="완료 후 폴더 열기", variable=self._open_folder_var,
+        ).grid(row=4, column=0, padx=12, pady=(2, 0), sticky="w")
+
         sep = ttk.Separator(root, orient="horizontal")
-        sep.grid(row=4, column=0, sticky="ew", padx=12, pady=6)
+        sep.grid(row=5, column=0, sticky="ew", padx=12, pady=6)
 
         # 메뉴 등록/제거 + 취소/실행
         bottom = tk.Frame(root)
-        bottom.grid(row=5, column=0, padx=12, pady=(0, 12), sticky="ew")
+        bottom.grid(row=6, column=0, padx=12, pady=(0, 12), sticky="ew")
         bottom.columnconfigure(1, weight=1)
 
         left_btn = tk.Frame(bottom)
@@ -480,14 +491,20 @@ class HelperWindow:
                 if conv_errors:
                     fails = "\n".join(f"- {p.name}: {e}" for p, e in conv_errors)
                     msg += f"\n\n실패 {len(conv_errors)}건:\n{fails}"
-                show_result_popup(self._root, "변환 완료", msg, results)
+                show_result_popup(
+                    self._root, "변환 완료", msg, results,
+                    auto_open_folder=self._open_folder_var.get(), show_folder_button=False,
+                )
             elif status == "error":
                 messagebox.showerror("오류", str(data))
 
         popup.run(worker, on_done)
 
     def _run_merge(self, paths: List[Path]):
-        _run_merge_popup(self._root, paths, self._name_var.get())
+        _run_merge_popup(
+            self._root, paths, self._name_var.get(),
+            open_folder_default=self._open_folder_var.get(),
+        )
 
     def mainloop(self):
         self._root.mainloop()
@@ -502,8 +519,14 @@ def _restore_name_default(var: tk.StringVar, _event=None):
         var.set("merged.pdf")
 
 
-def _run_merge_popup(parent: tk.Misc, paths: List[Path], filename: str, on_done_extra=None):
-    """병합 ProgressPopup 실행 공통 로직. on_done_extra(status) 는 done/error 후 추가 처리."""
+def _run_merge_popup(parent: tk.Misc, paths: List[Path], filename: str, on_done_extra=None,
+                      open_folder_default: bool = False):
+    """병합 ProgressPopup 실행 공통 로직. on_done_extra(status) 는 done/error 후 추가 처리.
+
+    open_folder_default: 호출측(MergeWindow/HelperWindow)의 "완료 후 폴더 열기" 체크박스 값.
+        이 함수는 항상 사전 설정 창을 통해서만 불리므로 완료 팝업엔 폴더 열기 버튼을 두지 않는다
+        (show_folder_button=False) — 체크박스가 그 결정을 이미 대신함.
+    """
     if not filename.strip():
         filename = "merged.pdf"
     if not filename.lower().endswith(".pdf"):
@@ -524,12 +547,13 @@ def _run_merge_popup(parent: tk.Misc, paths: List[Path], filename: str, on_done_
                 show_result_popup(
                     parent, "병합 완료 (일부 실패)",
                     f"{output_path.name} 생성 완료\n{output_path}\n\n실패 파일:\n{failed}",
-                    [output_path],
+                    [output_path], auto_open_folder=open_folder_default, show_folder_button=False,
                 )
             else:
                 show_result_popup(
                     parent, "병합 완료",
                     f"{output_path.name} 생성 완료\n{output_path}", [output_path],
+                    auto_open_folder=open_folder_default, show_folder_button=False,
                 )
         elif status == "error":
             messagebox.showerror("오류", str(data))
@@ -577,13 +601,22 @@ def _open_pdfs(paths: List[Path]):
             pass
 
 
-def show_result_popup(parent: tk.Misc, title: str, message: str, outputs: List[Path]):
-    """완료 팝업: 메시지 + [폴더 열기]·[PDF 열기](outputs 있을 때만)·[닫기].
+def show_result_popup(
+    parent: tk.Misc, title: str, message: str, outputs: List[Path],
+    auto_open_folder: bool = False, show_folder_button: bool = True,
+):
+    """완료 팝업: 메시지 + (설정에 따라) [폴더 열기]. PDF는 항상 자동으로 연다.
 
     outputs: 결과 PDF 경로 목록. 실제 존재하는 것만 열기 대상.
+    auto_open_folder: True면 폴더도 자동으로 연다 (병합/도우미 창의 "완료 후 폴더 열기" 체크박스용).
+    show_folder_button: False면 폴더 열기 버튼을 감춘다 (위 체크박스로 이미 결정된 경우).
+        사전 설정 창이 없는 흐름(우클릭 단일파일 병합·우클릭 일괄변환)에서는 True 유지.
     modal(wait_window) — 호출측이 이후 root.destroy() 해도 사용자가 버튼을 누를 시간이 보장됨.
     """
     openable = [p for p in outputs if p.exists()]
+    _open_pdfs(openable)  # PDF는 항상 자동으로 연다 (버튼 클릭 불필요)
+    if auto_open_folder and openable:
+        _open_folder(openable[0])
 
     win = tk.Toplevel(parent)
     win.title(title)
@@ -592,28 +625,23 @@ def show_result_popup(parent: tk.Misc, title: str, message: str, outputs: List[P
 
     tk.Label(win, text=message, justify="left").pack(padx=24, pady=(18, 12))
 
-    btn_row = tk.Frame(win)
-    btn_row.pack(pady=(0, 16))
-
     def _close():
         win.destroy()
 
-    def _open_folder_and_close():
-        _open_folder(openable[0])
-        _close()
+    if show_folder_button and openable:
+        btn_row = tk.Frame(win)
+        btn_row.pack(pady=(0, 16))
 
-    def _open_pdfs_and_close():
-        _open_pdfs(openable)
-        _close()
+        def _open_folder_and_close():
+            _open_folder(openable[0])
+            _close()
 
-    if openable:
         tk.Button(btn_row, text="폴더 열기", width=10,
                   command=_open_folder_and_close).pack(side="left", padx=4)
-        tk.Button(btn_row, text="PDF 열기", width=10,
-                  command=_open_pdfs_and_close).pack(side="left", padx=4)
-    tk.Button(btn_row, text="닫기", width=10, command=_close).pack(side="left", padx=4)
+    else:
+        tk.Frame(win).pack(pady=(0, 16))  # 버튼 없을 때도 하단 여백 유지
 
-    win.bind("<Return>", lambda _e: _open_pdfs_and_close() if openable else _close())
+    win.bind("<Return>", lambda _e: _close())
     win.bind("<Escape>", lambda _e: _close())
 
     _center(win, parent)

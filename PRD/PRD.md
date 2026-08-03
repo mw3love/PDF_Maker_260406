@@ -118,10 +118,13 @@ import fitz  # PyMuPDF
 
 def image_to_pdf(img_path: Path) -> Path:
     doc = fitz.open()
-    img_doc = fitz.open(str(img_path))   # 이미지를 1페이지 PDF로 열기
+    img_doc = fitz.open(str(img_path))   # 이미지를 1페이지 문서로 열어 크기만 조회
     rect = img_doc[0].rect
+    img_doc.close()
     page = doc.new_page(width=rect.width, height=rect.height)
-    page.show_pdf_page(page.rect, img_doc, 0)
+    # insert_image(stream=...)는 원본 인코딩 바이트가 필요 — img_doc.tobytes()는
+    # PDF 직렬화 전용이라 이미지 문서에 쓰면 PyMuPDF 1.27+에서 크래시(2026-07-28 수정)
+    page.insert_image(page.rect, stream=img_path.read_bytes())
     output = resolve_output_path(img_path.with_suffix(".pdf"))
     doc.save(str(output))
     return output
@@ -168,6 +171,7 @@ def merge_files(file_paths: List[Path], output_path: Path,
 │  ● 하나의 PDF로 병합                  │
 │  저장 파일명: [merged.pdf          ] │  ← 빈칸 이탈 시 기본값 복원
 │  저장 위치: 첫 번째 파일의 폴더       │
+│  ☐ 완료 후 폴더 열기                  │  ← 기본 off (2026-08-03)
 │  ─────────────────────────────────── │
 │  [메뉴 등록]  [메뉴 제거]            │  ← install.py 호출
 │            [취소]  [실행]            │
@@ -189,6 +193,7 @@ def merge_files(file_paths: List[Path], output_path: Path,
 │  └──────────────────────────┘  [−제거]│
 │  저장 파일명: [merged.pdf          ] │
 │  저장 위치: 첫 번째 파일의 폴더       │
+│  ☐ 완료 후 폴더 열기                  │  ← 기본 off (2026-08-03)
 │       [취소]        [병합 시작]       │  ← 파일 0개면 비활성화
 └───────────────────────────────────────┘
 ```
@@ -216,10 +221,11 @@ def merge_files(file_paths: List[Path], output_path: Path,
 - **부분 실패**: 성공 메시지 + 실패 파일 목록 (나머지는 계속 진행)
 - **전체 실패 / 지원 파일 없음**: 오류 팝업 후 종료
 
-**완료 팝업에 열기 버튼** (`show_result_popup`): 변환/병합 성공·부분실패 팝업은 확인 버튼만 있던 기존 `showinfo`를 대체해 `[폴더 열기]`·`[PDF 열기]`·`[닫기]` 3버튼을 제공한다.
-- `[폴더 열기]`: 탐색기에서 결과 파일이 선택된 채로 폴더 열기
-- `[PDF 열기]`: 결과 PDF를 기본 뷰어로 전부 열기 (개수 제한 없음 — 탭형 뷰어면 탭으로 열림). 자동 실행이 아니라 **사용자가 누를 때만** 열린다.
-- 결과 파일이 실제로 존재할 때만 열기 버튼 노출. `Enter`=PDF 열기 / `ESC`=닫기.
+**완료 팝업** (`show_result_popup`, 2026-08-03 개정): 변환/병합 성공·부분실패 팝업.
+- **PDF는 항상 자동으로 열린다**(`os.startfile`, 개수 제한 없음 — 탭형 뷰어면 탭으로 열림). 이전엔 `[PDF 열기]` 버튼 클릭이 필요했으나, 사용자가 매번 눌러야 하는 번거로움을 없애기 위해 완료 즉시 자동 실행으로 변경.
+- `[폴더 열기]` 버튼(탐색기에서 결과 파일 선택 상태로 열기)은 **사전 설정 창(체크박스)이 없는 흐름에서만** 노출: 우클릭 단일파일 병합, 우클릭 일괄변환. `MergeWindow`·`HelperWindow`를 거치는 흐름은 그 창의 "완료 후 폴더 열기" 체크박스(기본 off)가 이미 결정하므로 팝업엔 버튼을 두지 않는다.
+- `[닫기]` 버튼은 제거 — 우상단 X로 닫기.
+- 결과 파일이 실제로 존재할 때만 열기 대상. `Enter`/`ESC` 모두 닫기.
 
 ---
 
@@ -262,6 +268,8 @@ pyinstaller --onedir --windowed --name pdf_maker ^
 2. 폴더 안 `pdf_maker.exe` 더블클릭 → 도우미 GUI → **[메뉴 등록]** (우클릭 메뉴 + 보안모듈 자동 등록)
 3. 탐색기 우클릭에서 즉시 사용 가능
 4. HWP 기능은 그 PC에 한글(한컴오피스) 설치 시에만 동작 (없으면 이미지/PDF만, HWP는 스킵)
+
+⚠ **압축 해제 위치는 로컬 디스크로 — 클라우드 동기화 드라이브(구글 드라이브 등) 금지.** `[메뉴 등록]`은 그 순간의 exe 경로를 레지스트리에 그대로 박는데, 경로가 클라우드 동기화 가상 드라이브면 파일시스템 필터 드라이버 오버헤드로 우클릭 실행 시작이 **로컬 디스크 대비 8배 이상 느려진다**(2026-08-03 실측). 개발 PC 기준 배포 위치는 `C:\Users\minwoo\Dev\PDF_Maker_260406`.
 
 ---
 

@@ -58,6 +58,8 @@ python src/main.py install                # 레지스트리 등록
 python src/main.py uninstall             # 레지스트리 삭제
 ```
 
+⚠ **배포(dist) 위치는 로컬 디스크에 둘 것 — 클라우드 동기화 드라이브(구글 드라이브 등) 금지.** 우클릭 메뉴 등록(`install()`)은 `sys.executable` 경로를 그대로 레지스트리에 박으므로, 그 경로가 클라우드 동기화 가상 드라이브(예: 구글 드라이브 `G:\`)면 매 실행마다 파일시스템 필터 드라이버 오버헤드가 붙어 **로컬 디스크 대비 실행 시작이 8배 이상 느려진다**(2026-08-03 실측 — 동일 exe를 `C:\`에 복사해 비교). 이 프로젝트는 `C:\Users\minwoo\Dev\PDF_Maker_260406`(로컬)로 이전했고 `sync-repos`(`~/.claude/repos.json`) 명단에 등록되어 여러 PC 간 `git pull`+`build.bat`로 동기화된다.
+
 ## Key Architecture: 세션 수집기 (Session Collector)
 
 `MultiSelectModel = Player` 때문에 파일 n개 선택 시 exe가 n번 동시 호출됨. Lock 파일로 마스터 프로세스 1개를 선출하는 패턴:
@@ -170,7 +172,8 @@ def merge_files(file_paths, output_path, progress_cb=None, cancel_flag=None):
 - `_FileListFrame._refresh_display()`: 파일 추가/제거/이동 후 Listbox 전체 갱신 (번호 재정렬 + 선택 복원)
 - `MergeWindow`: 초기화 시 topmost+focus_force → 200ms 후 topmost 해제 (포커스 보장)
 - `_center()`: withdraw/deiconify 패턴으로 창 위치 설정 시 깜빡임 제거
-- `show_result_popup(parent, title, message, outputs)`: 변환/병합 **완료 팝업**(기존 `messagebox.showinfo` 대체). 버튼 `[폴더 열기]`(`explorer /select,<첫 파일>`)·`[PDF 열기]`(`os.startfile`로 outputs 전부 열기 — 개수 제한 없음)·`[닫기]`. **세 버튼 모두 클릭 시 창을 닫는다**(2026-07-28: 3개 중 하나만 고르면 되므로 열기 버튼도 클릭 즉시 닫히도록 변경 — 이전엔 열기 후에도 창이 남아있어 따로 닫기를 눌러야 했음). `outputs` 중 **실제 존재하는 것만** 열기 대상이고, 하나도 없으면 열기 버튼 숨김. `Enter`=PDF 열기(후 닫힘) / `ESC`=닫기. `wait_visibility()`→`grab_set()`→`wait_window()`로 모달(호출측이 이후 `root.destroy()` 해도 클릭 시간 보장). convert 일괄·merge 병합·단일파일 즉시처리 4곳 모두 이 팝업 사용.
+- `show_result_popup(parent, title, message, outputs, auto_open_folder=False, show_folder_button=True)`: 변환/병합 **완료 팝업**(기존 `messagebox.showinfo` 대체). **PDF는 항상 자동으로 연다**(`os.startfile`, 버튼 불필요 — 2026-08-03: 완료 즉시 열리도록 변경, 이전엔 `[PDF 열기]` 버튼 클릭이 필요했음). `auto_open_folder=True`면 폴더도 자동으로 연다. `show_folder_button`이 True일 때만 `[폴더 열기]` 버튼(`explorer /select,<첫 파일>`) 노출 — **사전 설정 창(체크박스)이 없는 흐름에서만 True**(우클릭 단일파일 병합·우클릭 일괄변환). `[닫기]` 버튼은 제거(우상단 X로 대체). `outputs` 중 실제 존재하는 것만 열기 대상. `Enter`/`ESC` 둘 다 닫기. `wait_visibility()`→`grab_set()`→`wait_window()`로 모달(호출측이 이후 `root.destroy()` 해도 클릭 시간 보장).
+- **"완료 후 폴더 열기" 체크박스** (2026-08-03): `MergeWindow`(우클릭 다중파일 병합)와 `HelperWindow`(더블클릭, 병합·변환 공통)에 기본 off 체크박스 추가. 값은 `_run_merge_popup(open_folder_default=...)` / `show_result_popup(auto_open_folder=...)`로 전달되고, 이 두 창을 거치는 흐름은 `show_folder_button=False`(체크박스가 그 결정을 대신하므로 완료 팝업엔 폴더 열기 버튼을 두지 않음). 사전 설정 창이 없는 흐름(우클릭 단일파일 병합·우클릭 일괄변환)은 여전히 완료 팝업의 `[폴더 열기]` 버튼에 의존.
 
 ## Registry Keys (install.py)
 
